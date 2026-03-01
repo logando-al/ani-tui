@@ -29,6 +29,11 @@ pub struct PlayOptions {
 pub fn build_args(opts: &PlayOptions) -> Vec<String> {
     let mut args = Vec::new();
 
+    // Auto-pick the first ani-cli search match to avoid dropping into the
+    // interactive series chooser for ambiguous titles.
+    args.push("-S".to_string());
+    args.push("1".to_string());
+
     // Episode selection
     args.push("-e".to_string());
     args.push(opts.episode.to_string());
@@ -136,6 +141,8 @@ mod tests {
     #[test]
     fn test_build_args_sub_mode() {
         let args = build_args(&opts("Naruto", 1, "1080p", false));
+        assert!(args.contains(&"-S".to_string()));
+        assert!(args.contains(&"1".to_string()));
         assert!(args.contains(&"-e".to_string()));
         assert!(args.contains(&"1".to_string()));
         assert!(args.contains(&"-q".to_string()));
@@ -180,6 +187,14 @@ mod tests {
         let args_dub = build_args(&opts("Test", 1, "720p", true));
         assert!(args_sub.contains(&"--no-detach".to_string()));
         assert!(args_dub.contains(&"--no-detach".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_select_nth_precedes_title() {
+        let args = build_args(&opts("Test", 1, "720p", false));
+        let s_pos = args.iter().position(|a| a == "-S").unwrap();
+        assert_eq!(args[s_pos + 1], "1");
+        assert_eq!(args.last().unwrap(), "Test");
     }
 
     #[test]

@@ -152,6 +152,10 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 Screen::Detail   => ui::detail::render(frame, &mut state),
+                Screen::PlaybackQuery => {
+                    ui::detail::render(frame, &mut state);
+                    ui::play_query::render_overlay(frame, &state);
+                }
                 Screen::Playback => ui::playback::render(frame, &state),
                 Screen::Search   => {
                     // Home beneath the overlay
@@ -213,6 +217,7 @@ async fn handle_key(
     match state.screen {
         Screen::Home     => handle_home(key, state, home_data, pool, cfg, tx).await,
         Screen::Detail   => handle_detail(key, state, pool, cfg, tx).await,
+        Screen::PlaybackQuery => handle_playback_query(key, state, pool, cfg, tx).await,
         Screen::Playback => handle_playback(key, state, pool, cfg, tx).await,
         Screen::Search   => handle_search(key, state, pool, tx).await,
         Screen::Help     => { state.go_back(); }
@@ -431,16 +436,20 @@ async fn handle_detail(
         // Play
         KeyCode::Enter => {
             if let Some(anime) = state.selected_anime.clone() {
-                let ep    = state.selected_episode.unwrap_or(1);
-                let title = anime.display_title().to_string();
-                let opts  = api::player::PlayOptions {
-                    title:   title.clone(),
-                    episode: ep,
-                    quality: cfg.quality.as_str().to_string(),
-                    dub:     cfg.audio_mode == config::AudioMode::Dub,
-                    player:  cfg.player.as_str().to_string(),
-                };
-                start_playback(state, opts, title, ep, tx, pool).await;
+                if anime.playback_queries().len() > 1 {
+                    state.open_playback_query_picker(&anime);
+                } else {
+                    let ep    = state.selected_episode.unwrap_or(1);
+                    let title = anime.display_title().to_string();
+                    let opts  = api::player::PlayOptions {
+                        title:   anime.playback_query(),
+                        episode: ep,
+                        quality: cfg.quality.as_str().to_string(),
+                        dub:     cfg.audio_mode == config::AudioMode::Dub,
+                        player:  cfg.player.as_str().to_string(),
+                    };
+                    start_playback(state, opts, title, ep, tx, pool).await;
+                }
             }
         }
 
@@ -472,6 +481,48 @@ async fn handle_detail(
             }
         }
 
+        _ => {}
+    }
+}
+
+// ── Playback query overlay ─────────────────────────────────────────────────────
+
+async fn handle_playback_query(
+    key:   event::KeyEvent,
+    state: &mut AppState,
+    pool:  &sqlx::SqlitePool,
+    cfg:   &config::Config,
+    tx:    &tokio::sync::mpsc::Sender<AppMessage>,
+) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => state.go_back(),
+        KeyCode::Down | KeyCode::Char('j') => {
+            if state.playback_query_cursor + 1 < state.playback_queries.len() {
+                state.playback_query_cursor += 1;
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.playback_query_cursor = state.playback_query_cursor.saturating_sub(1);
+        }
+        KeyCode::Enter => {
+            if let Some(anime) = state.selected_anime.clone() {
+                let ep    = state.selected_episode.unwrap_or(1);
+                let title = anime.display_title().to_string();
+                let query = state
+                    .playback_queries
+                    .get(state.playback_query_cursor)
+                    .cloned()
+                    .unwrap_or_else(|| anime.playback_query());
+                let opts  = api::player::PlayOptions {
+                    title:   query,
+                    episode: ep,
+                    quality: cfg.quality.as_str().to_string(),
+                    dub:     cfg.audio_mode == config::AudioMode::Dub,
+                    player:  cfg.player.as_str().to_string(),
+                };
+                start_playback(state, opts, title, ep, tx, pool).await;
+            }
+        }
         _ => {}
     }
 }
@@ -569,7 +620,7 @@ async fn handle_playback(
                     state.selected_episode = Some(next);
                     let title = anime.display_title().to_string();
                     let opts  = api::player::PlayOptions {
-                        title:   title.clone(),
+                        title:   anime.playback_query(),
                         episode: next,
                         quality: cfg.quality.as_str().to_string(),
                         dub:     cfg.audio_mode == config::AudioMode::Dub,

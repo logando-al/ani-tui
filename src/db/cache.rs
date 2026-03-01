@@ -52,9 +52,67 @@ impl Anime {
         }
     }
 
+    /// Playback query for ani-cli.
+    ///
+    /// Prefer the most specific known title (English vs romaji) to reduce
+    /// ambiguous franchise matches such as seasoned sequels.
+    pub fn playback_query(&self) -> String {
+        let english = self
+            .title_english
+            .as_deref()
+            .filter(|t| !t.is_empty());
+        let romaji = self.title_romaji.as_str();
+
+        match english {
+            Some(title) if title_specificity(romaji) > title_specificity(title) => romaji.to_string(),
+            Some(title) => title.to_string(),
+            None => romaji.to_string(),
+        }
+    }
+
+    /// Candidate playback queries for ambiguous series/franchises.
+    pub fn playback_queries(&self) -> Vec<String> {
+        let mut queries = Vec::new();
+
+        push_unique(&mut queries, self.playback_query());
+
+        if let Some(title) = self.title_english.as_deref().filter(|t| !t.is_empty()) {
+            push_unique(&mut queries, title.to_string());
+            if let Some(year) = self.season_year {
+                push_unique(&mut queries, format!("{title} {year}"));
+            }
+        }
+
+        push_unique(&mut queries, self.title_romaji.clone());
+        if let Some(year) = self.season_year {
+            push_unique(&mut queries, format!("{} {}", self.title_romaji, year));
+        }
+
+        queries
+    }
+
     /// Returns true if dub is available.
     pub fn has_dub(&self) -> bool {
         self.has_dub != 0
+    }
+}
+
+fn title_specificity(title: &str) -> usize {
+    let lower = title.to_ascii_lowercase();
+    let keyword_bonus = [
+        "season", "part", "movie", "special", "ova", "ona", "final",
+    ]
+    .into_iter()
+    .filter(|keyword| lower.contains(keyword))
+    .count() * 50;
+    let digit_bonus = title.chars().filter(|c| c.is_ascii_digit()).count() * 25;
+
+    title.len() + keyword_bonus + digit_bonus
+}
+
+fn push_unique(values: &mut Vec<String>, candidate: String) {
+    if !candidate.is_empty() && !values.iter().any(|existing| existing == &candidate) {
+        values.push(candidate);
     }
 }
 

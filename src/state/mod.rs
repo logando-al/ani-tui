@@ -11,6 +11,8 @@ pub enum Screen {
     Home,
     /// Detail screen: full info + episode list for a selected anime
     Detail,
+    /// Playback query picker overlay shown on top of Detail
+    PlaybackQuery,
     /// Playback screen: log stream + controls
     Playback,
     /// Search overlay (shown on top of Home or Detail)
@@ -62,6 +64,12 @@ pub struct AppState {
     /// Search overlay: which result is highlighted
     pub search_cursor:    usize,
 
+    /// Playback query picker: candidate search queries to send to ani-cli
+    pub playback_queries: Vec<String>,
+
+    /// Playback query picker: selected query index
+    pub playback_query_cursor: usize,
+
     /// Playback: oneshot sender to stop the background player task
     pub player_stop:      Option<tokio::sync::oneshot::Sender<()>>,
 
@@ -109,6 +117,8 @@ impl AppState {
             search_query:     String::new(),
             search_results:   Vec::new(),
             search_cursor:    0,
+            playback_queries: Vec::new(),
+            playback_query_cursor: 0,
             player_stop:      None,
             now_playing:      None,
             playback_logs:    Vec::new(),
@@ -162,6 +172,7 @@ impl AppState {
     pub fn go_back(&mut self) {
         self.screen = match self.screen {
             Screen::Playback => Screen::Detail,
+            Screen::PlaybackQuery => Screen::Detail,
             Screen::Detail   => Screen::Home,
             Screen::Search   => Screen::Home,
             Screen::Help     => Screen::Home,
@@ -191,6 +202,13 @@ impl AppState {
         self.search_results = Vec::new();
         self.search_cursor  = 0;
         self.screen         = Screen::Search;
+    }
+
+    /// Open the playback query picker for the current anime.
+    pub fn open_playback_query_picker(&mut self, anime: &Anime) {
+        self.playback_queries = anime.playback_queries();
+        self.playback_query_cursor = 0;
+        self.screen = Screen::PlaybackQuery;
     }
 
     /// Push a log line to the playback log buffer (capped at 200 lines).
