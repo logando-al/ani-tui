@@ -417,6 +417,7 @@ async fn handle_detail(
                     episode: ep,
                     quality: cfg.quality.as_str().to_string(),
                     dub:     cfg.audio_mode == config::AudioMode::Dub,
+                    player:  cfg.player.as_str().to_string(),
                 };
                 start_playback(state, opts, title, ep, tx, pool).await;
             }
@@ -551,6 +552,7 @@ async fn handle_playback(
                         episode: next,
                         quality: cfg.quality.as_str().to_string(),
                         dub:     cfg.audio_mode == config::AudioMode::Dub,
+                        player:  cfg.player.as_str().to_string(),
                     };
                     start_playback(state, opts, title, next, tx, pool).await;
                 }

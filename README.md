@@ -36,6 +36,7 @@ Before running `ani-tui`, make sure these runtime dependencies are installed:
 - [ani-cli](https://github.com/pystardust/ani-cli) must be installed and available on `$PATH`
 - A supported video player must be installed
   - `mpv` is the default player
+  - on macOS, `ani-tui` will fall back to `iina` automatically if `mpv` is not installed
   - `vlc` can also be used if you change `player` in the config
 - A terminal with truecolor support is recommended
   - Ghostty works, but `ani-tui` currently falls back to halfblock cover rendering there for stability
@@ -127,7 +128,7 @@ Config file is created automatically at first run:
 ```toml
 quality    = "best"      # best | 1080p | 720p | 480p | 360p
 audio_mode = "sub"       # sub | dub
-player     = "mpv"       # player passed to ani-cli
+player     = "mpv"       # preferred player: mpv (falls back to iina on macOS) | vlc
 
 [cache]
 trending_ttl = 86400     # seconds (24h)

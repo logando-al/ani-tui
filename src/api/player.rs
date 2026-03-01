@@ -2,7 +2,11 @@
 //! Spawns ani-cli in non-interactive mode for async playback with log streaming.
 
 use crate::error::{AppError, Result};
-use std::process::Stdio;
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::Stdio,
+};
 use tokio::process::{Child, Command};
 
 /// Options passed to ani-cli when launching playback.
@@ -16,6 +20,8 @@ pub struct PlayOptions {
     pub quality: String,
     /// true = dub, false = sub
     pub dub:     bool,
+    /// Preferred player passed through to ani-cli
+    pub player:  String,
 }
 
 /// Build the ani-cli command arguments for a given play request.
@@ -45,13 +51,66 @@ pub fn build_args(opts: &PlayOptions) -> Vec<String> {
     args
 }
 
+/// Resolve the actual player command to give ani-cli.
+///
+/// Preference order:
+/// - `mpv` stays the default when installed
+/// - on macOS, `mpv` falls back to `iina` / `iina-cli` when `mpv` is unavailable
+/// - `vlc` remains an explicit cross-platform option
+pub fn resolve_player(preferred: &str) -> String {
+    match preferred {
+        "mpv" => {
+            if command_exists("mpv") {
+                "mpv".to_string()
+            } else if let Some(iina) = macos_iina_fallback() {
+                iina
+            } else {
+                "mpv".to_string()
+            }
+        }
+        "vlc" => "vlc".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn command_exists(name: &str) -> bool {
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+
+    env::split_paths(&path).any(|dir| executable_exists(&dir.join(name)))
+}
+
+fn executable_exists(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn macos_iina_fallback() -> Option<String> {
+    if env::consts::OS != "macos" {
+        return None;
+    }
+
+    let app_path = PathBuf::from("/Applications/IINA.app/Contents/MacOS/iina-cli");
+    if executable_exists(&app_path) {
+        return Some(app_path.to_string_lossy().into_owned());
+    }
+
+    if command_exists("iina") {
+        return Some("iina".to_string());
+    }
+
+    None
+}
+
 /// Spawn ani-cli asynchronously. stdout + stderr are piped for log streaming.
 /// Returns a tokio Child — caller is responsible for reading I/O and waiting.
 pub fn spawn_async(opts: &PlayOptions) -> Result<Child> {
     let args = build_args(opts);
+    let player = resolve_player(&opts.player);
     Command::new("ani-cli")
         .args(&args)
         .env("ANI_CLI_NON_INTERACTIVE", "1")
+        .env("ANI_CLI_PLAYER", player)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -70,6 +129,7 @@ mod tests {
             episode,
             quality: quality.to_string(),
             dub,
+            player:  "mpv".to_string(),
         }
     }
 
@@ -120,5 +180,10 @@ mod tests {
         let args_dub = build_args(&opts("Test", 1, "720p", true));
         assert!(args_sub.contains(&"--no-detach".to_string()));
         assert!(args_dub.contains(&"--no-detach".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_player_keeps_vlc() {
+        assert_eq!(resolve_player("vlc"), "vlc");
     }
 }
