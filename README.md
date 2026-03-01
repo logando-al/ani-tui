@@ -98,7 +98,7 @@ chmod +x ~/.local/bin/ani-tui
 Option 2: install from the tagged source release with Cargo.
 
 ```bash
-cargo install --git https://github.com/logando-al/ani-tui --tag v1.0.1
+cargo install --git https://github.com/logando-al/ani-tui --tag v1.0.2
 ```
 
 Install runtime dependencies with your distro package manager, then install `ani-cli` separately.
