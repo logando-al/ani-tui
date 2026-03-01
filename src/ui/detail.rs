@@ -1,7 +1,7 @@
 //! Detail screen — full anime info + scrollable episode list.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
@@ -52,23 +52,43 @@ fn render_info(frame: &mut Frame, area: Rect, state: &mut AppState, anime: &Anim
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(24), // cover art
+            Constraint::Length(20), // cover art
             Constraint::Min(0),     // metadata
         ])
         .split(area);
 
+    let cover_frame = if cols[0].width > 4 && cols[0].height > 4 {
+        cols[0].inner(Margin { horizontal: 1, vertical: 1 })
+    } else {
+        cols[0]
+    };
+    let cover_bg = Block::default().style(Style::default().bg(Color::Rgb(14, 14, 22)));
+    frame.render_widget(cover_bg, cover_frame);
+    let cover_inner = if cover_frame.width > 2 && cover_frame.height > 2 {
+        cover_frame.inner(Margin { horizontal: 1, vertical: 1 })
+    } else {
+        cover_frame
+    };
+
     // Cover: real image when terminal supports it, halfblock otherwise
     if state.has_image_support() && state.cover_state.is_some() {
         if let Some(ref mut cover) = state.cover_state {
-            let image_widget = ratatui_image::StatefulImage::new(None);
-            frame.render_stateful_widget(image_widget, cols[0], cover);
+            let image_widget = ratatui_image::StatefulImage::new(None)
+                .resize(ratatui_image::Resize::Fit(None));
+            frame.render_stateful_widget(image_widget, cover_inner, cover);
         }
     } else {
         frame.render_widget(
             HalfblockCover { anime_id: anime.id, title: anime.display_title() },
-            cols[0],
+            cover_inner,
         );
     }
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(60, 60, 80))),
+        cover_frame,
+    );
 
     // Metadata
     render_metadata(frame, cols[1], anime);

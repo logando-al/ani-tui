@@ -14,7 +14,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use state::{AppState, Screen};
-use std::{env, io, time::Duration};
+use std::{io, time::Duration};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 // ─── Message channel ──────────────────────────────────────────────────────────
@@ -35,14 +35,6 @@ enum AppMessage {
     CoverFailed(i64),
     /// Watchlist changed — send fresh list to update home row immediately
     WatchlistUpdated(Vec<db::cache::Anime>),
-}
-
-/// Ghostty can advertise image capabilities but still be unstable with ratatui-image's runtime
-/// protocol probing/render path. Prefer the safe halfblock fallback there.
-fn should_enable_image_picker() -> bool {
-    let term = env::var("TERM").unwrap_or_default();
-    let term_program = env::var("TERM_PROGRAM").unwrap_or_default();
-    !term.contains("ghostty") && !term_program.eq_ignore_ascii_case("ghostty")
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -72,11 +64,9 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Image picker (after alternate screen, before event loop) ──────────────
     // guess_protocol() probes the terminal — must happen after EnterAlternateScreen.
-    if should_enable_image_picker() {
-        if let Ok(mut picker) = ratatui_image::picker::Picker::from_termios() {
-            picker.guess_protocol();
-            state.picker = Some(picker);
-        }
+    if let Ok(mut picker) = ratatui_image::picker::Picker::from_termios() {
+        picker.guess_protocol();
+        state.picker = Some(picker);
     }
 
     // ── Startup: kick off background sync ─────────────────────────────────────
