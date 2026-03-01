@@ -52,7 +52,7 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
     };
 
     let banner = Block::default()
-        .borders(Borders::LEFT)
+        .borders(Borders::LEFT | Borders::TOP)
         .border_style(Style::default().fg(Color::Rgb(180, 0, 255)))
         .style(Style::default().bg(Color::Rgb(12, 12, 18)));
     let inner = banner.inner(area);
@@ -115,6 +115,15 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
         .last_played
         .as_deref()
         .filter(|_| state.last_played_anime_id == Some(anime.id));
+    let focus_label = match state.active_row {
+        CategoryRow::ContinueWatching => " Continue Watching ",
+        CategoryRow::Watchlist => " My Watchlist ",
+        CategoryRow::Recommended => " For You ",
+        CategoryRow::Trending => " Trending Now ",
+        CategoryRow::Popular => " Popular Picks ",
+        CategoryRow::TopRated => " Top Rated ",
+        CategoryRow::Seasonal => " Seasonal ",
+    };
 
     let cover_frame = if cols[0].width > 4 {
         cols[0].inner(Margin { horizontal: 1, vertical: 0 })
@@ -158,17 +167,68 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
         cover_frame,
     );
 
+    let meta_line = Line::from(vec![
+        Span::styled(
+            focus_label,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(180, 0, 255))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!(" {} ", score),
+            Style::default()
+                .fg(Color::Rgb(225, 225, 235))
+                .bg(Color::Rgb(28, 28, 38)),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!(" {} ", eps),
+            Style::default()
+                .fg(Color::Rgb(225, 225, 235))
+                .bg(Color::Rgb(28, 28, 38)),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!(" {} {} ", fmt, year),
+            Style::default()
+                .fg(Color::Rgb(225, 225, 235))
+                .bg(Color::Rgb(28, 28, 38)),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!(" {} ", status),
+            Style::default()
+                .fg(Color::Rgb(190, 190, 205))
+                .bg(Color::Rgb(20, 20, 28)),
+        ),
+    ]);
+
     let mut content = vec![
+        Line::from(vec![
+            Span::styled(
+                " Selected ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                "Home Banner",
+                Style::default()
+                    .fg(Color::Rgb(150, 150, 170))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
         Line::from(Span::styled(
             title,
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(
-            format!("{}  |  {}  |  {}  |  {}  |  {}", score, eps, fmt, year, status),
-            Style::default().fg(Color::Rgb(180, 180, 180)),
-        )),
+        meta_line,
         Line::from(vec![
             Span::styled(
                 format!(" {} ", progress),
@@ -180,7 +240,6 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
             Span::raw("  "),
             Span::styled(genres, Style::default().fg(Color::Rgb(180, 0, 255))),
         ]),
-        Line::from(""),
         Line::from(Span::styled(
             desc,
             Style::default().fg(Color::Rgb(200, 200, 200)),
@@ -398,13 +457,35 @@ fn render_card(
 
     // When selected, draw a purple border and shrink the content area inward
     let content_area = if selected {
+        let glow = Block::default().style(Style::default().bg(Color::Rgb(26, 10, 38)));
+        frame.render_widget(glow, area);
         let border = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(180, 0, 255)));
+            .border_style(
+                Style::default()
+                    .fg(Color::Rgb(180, 0, 255))
+                    .add_modifier(Modifier::BOLD),
+            );
         let inner = border.inner(area);
         frame.render_widget(border, area);
+        if area.width > 0 && area.height > 2 {
+            let accent = Rect {
+                x: area.x,
+                y: area.y,
+                width: 1,
+                height: area.height,
+            };
+            frame.render_widget(
+                Block::default().style(Style::default().bg(Color::Rgb(180, 0, 255))),
+                accent,
+            );
+        }
         inner
     } else {
+        frame.render_widget(
+            Block::default().style(Style::default().bg(Color::Rgb(10, 10, 16))),
+            area,
+        );
         area
     };
 
@@ -426,9 +507,15 @@ fn render_card(
     // Title
     let title = Paragraph::new(Span::styled(
         anime.short_title(),
-        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(if selected { Modifier::BOLD | Modifier::UNDERLINED } else { Modifier::BOLD }),
     ))
-    .style(Style::default().bg(Color::Rgb(15, 15, 20)));
+    .style(Style::default().bg(if selected {
+        Color::Rgb(22, 14, 30)
+    } else {
+        Color::Rgb(15, 15, 20)
+    }));
     frame.render_widget(title, chunks[1]);
 
     // Score + format
@@ -449,7 +536,9 @@ fn render_card(
             format!("{} · {}", score_str, fmt_str)
         }
     };
-    let meta_color = if reason.is_some() || progress.is_some() {
+    let meta_color = if selected {
+        Color::Rgb(230, 230, 240)
+    } else if reason.is_some() || progress.is_some() {
         Color::Rgb(180, 0, 255)
     } else {
         Color::Rgb(160, 160, 160)
@@ -458,8 +547,31 @@ fn render_card(
         meta_text,
         Style::default().fg(meta_color),
     ))
-    .style(Style::default().bg(Color::Rgb(15, 15, 20)));
+    .style(Style::default().bg(if selected {
+        Color::Rgb(22, 14, 30)
+    } else {
+        Color::Rgb(15, 15, 20)
+    }));
     frame.render_widget(meta, chunks[2]);
+
+    if selected && content_area.width > 2 {
+        let badge = Rect {
+            x: content_area.x.saturating_add(1),
+            y: content_area.y,
+            width: content_area.width.saturating_sub(2).min(10),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Browsing ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(240, 240, 245))
+                    .add_modifier(Modifier::BOLD),
+            )),
+            badge,
+        );
+    }
 }
 
 fn truncate_reason(reason: &str, max_chars: usize) -> String {
