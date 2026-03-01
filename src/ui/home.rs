@@ -1,0 +1,259 @@
+//! Home screen — Netflix-style category rows.
+//! Renders: Featured banner + Continue Watching + Trending + Popular + Top Rated + Seasonal.
+
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
+    Frame,
+};
+
+use crate::{
+    db::cache::Anime,
+    state::AppState,
+    ui::components::cover::HalfblockCover,
+};
+
+/// Width of each anime card in the row (chars)
+const CARD_WIDTH: u16  = 22;
+/// Height of each anime card (rows)
+const CARD_HEIGHT: u16 = 10;
+/// Gap between cards
+const CARD_GAP: u16    = 1;
+
+/// Render the full home screen.
+pub fn render(frame: &mut Frame, state: &AppState, categories: &HomeData) {
+    let area = frame.area();
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(10), // Featured banner
+            Constraint::Length(1),  // Spacer
+            Constraint::Min(0),     // Rows
+        ])
+        .split(area);
+
+    render_featured(frame, chunks[0], categories.featured.as_ref());
+    render_rows(frame, chunks[2], state, categories);
+}
+
+/// Featured banner at the top — highlights the first trending anime.
+fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>) {
+    let Some(anime) = anime else {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .style(Style::default().bg(Color::Rgb(20, 20, 20)));
+        frame.render_widget(block, area);
+        return;
+    };
+
+    let title   = anime.display_title();
+    let genres  = anime.genre_list().join(" · ");
+    let score   = anime
+        .score
+        .map(|s| format!("★ {:.1}", s as f32 / 10.0))
+        .unwrap_or_else(|| "★ N/A".to_string());
+    let eps     = anime
+        .episodes
+        .map(|e| format!("{} eps", e))
+        .unwrap_or_else(|| "? eps".to_string());
+    let desc    = anime
+        .description
+        .as_deref()
+        .unwrap_or("No description available.")
+        .chars()
+        .take(120)
+        .collect::<String>();
+
+    let content = vec![
+        Line::from(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            format!("{}  |  {}  |  {}", score, eps, genres),
+            Style::default().fg(Color::Rgb(180, 180, 180)),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            desc,
+            Style::default().fg(Color::Rgb(200, 200, 200)),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                " ▶ Play ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                " + Watchlist ",
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Rgb(60, 60, 60)),
+            ),
+        ]),
+    ];
+
+    let block = Paragraph::new(content)
+        .block(
+            Block::default()
+                .borders(Borders::LEFT)
+                .border_style(Style::default().fg(Color::Rgb(180, 0, 255)))
+                .style(Style::default().bg(Color::Rgb(12, 12, 18))),
+        )
+        .style(Style::default().bg(Color::Rgb(12, 12, 18)));
+    frame.render_widget(block, area);
+}
+
+/// Render all category rows.
+fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData) {
+    let rows: Vec<(&str, &str, &[Anime])> = vec![
+        ("Continue Watching", "continue_watching", &data.continue_watching),
+        ("🔥 Trending",       "trending",          &data.trending),
+        ("⭐ Popular",        "popular",           &data.popular),
+        ("🏆 Top Rated",      "top_rated",         &data.top_rated),
+        ("📅 Seasonal",       "seasonal",          &data.seasonal),
+    ];
+
+    // Filter out empty rows
+    let visible: Vec<_> = rows.into_iter().filter(|(_, _, items)| !items.is_empty()).collect();
+    let row_count        = visible.len() as u16;
+
+    if row_count == 0 {
+        return;
+    }
+
+    // Each row = 1 (label) + CARD_HEIGHT (cards) + 1 (gap)
+    let row_height  = 1 + CARD_HEIGHT + 1;
+    let constraints: Vec<Constraint> = (0..row_count)
+        .map(|_| Constraint::Length(row_height))
+        .collect();
+
+    let row_areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    for (i, (label, key, items)) in visible.iter().enumerate() {
+        if i < row_areas.len() {
+            render_row(frame, row_areas[i], state, label, key, items);
+        }
+    }
+}
+
+/// Render a single horizontal category row with a label and cards.
+fn render_row(
+    frame:  &mut Frame,
+    area:   Rect,
+    state:  &AppState,
+    label:  &str,
+    key:    &str,
+    items:  &[Anime],
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+
+    // Row label
+    let label_widget = Paragraph::new(Line::from(Span::styled(
+        format!(" {}", label),
+        Style::default()
+            .fg(Color::Rgb(220, 220, 220))
+            .add_modifier(Modifier::BOLD),
+    )));
+    frame.render_widget(label_widget, chunks[0]);
+
+    // Cards
+    let card_area   = chunks[1];
+    let offset      = state.row_offset(key);
+    let visible_n   = (card_area.width / (CARD_WIDTH + CARD_GAP)).max(1) as usize;
+    let visible_items: Vec<&Anime> = items.iter().skip(offset).take(visible_n).collect();
+
+    for (i, anime) in visible_items.iter().enumerate() {
+        let x    = card_area.x + i as u16 * (CARD_WIDTH + CARD_GAP);
+        let rect = Rect {
+            x,
+            y:      card_area.y,
+            width:  CARD_WIDTH,
+            height: CARD_HEIGHT,
+        };
+        if rect.x + rect.width <= card_area.x + card_area.width {
+            render_card(frame, rect, anime);
+        }
+    }
+}
+
+/// Render a single anime card (cover + title + score).
+fn render_card(frame: &mut Frame, area: Rect, anime: &Anime) {
+    if area.height < 3 {
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // cover art
+            Constraint::Length(1), // title
+            Constraint::Length(1), // score + format
+        ])
+        .split(area);
+
+    // Cover (halfblock — real image layer added later)
+    frame.render_widget(
+        HalfblockCover { anime_id: anime.id, title: anime.display_title() },
+        chunks[0],
+    );
+
+    // Title
+    let title = Paragraph::new(Span::styled(
+        anime.short_title(),
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+    ))
+    .style(Style::default().bg(Color::Rgb(15, 15, 20)));
+    frame.render_widget(title, chunks[1]);
+
+    // Score + format
+    let score_str = anime
+        .score
+        .map(|s| format!("★{:.1}", s as f32 / 10.0))
+        .unwrap_or_else(|| "★ N/A".to_string());
+    let fmt_str   = anime.format.as_deref().unwrap_or("TV");
+    let meta      = Paragraph::new(Span::styled(
+        format!("{} · {}", score_str, fmt_str),
+        Style::default().fg(Color::Rgb(160, 160, 160)),
+    ))
+    .style(Style::default().bg(Color::Rgb(15, 15, 20)));
+    frame.render_widget(meta, chunks[2]);
+}
+
+/// All data needed to render the home screen.
+pub struct HomeData {
+    pub featured:          Option<Anime>,
+    pub continue_watching: Vec<Anime>,
+    pub trending:          Vec<Anime>,
+    pub popular:           Vec<Anime>,
+    pub top_rated:         Vec<Anime>,
+    pub seasonal:          Vec<Anime>,
+}
+
+impl HomeData {
+    pub fn empty() -> Self {
+        Self {
+            featured:          None,
+            continue_watching: Vec::new(),
+            trending:          Vec::new(),
+            popular:           Vec::new(),
+            top_rated:         Vec::new(),
+            seasonal:          Vec::new(),
+        }
+    }
+}
