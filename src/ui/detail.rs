@@ -21,17 +21,25 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
     };
 
     let area = frame.area();
+    let action_label = match state.selected_episode.unwrap_or(1) {
+        1 => " Start E1 ".to_string(),
+        ep => format!(" Continue E{} ", ep),
+    };
 
     // Back hint
     let hint = Paragraph::new(Line::from(vec![
         Span::styled(" ← Esc", Style::default().fg(Color::Rgb(120, 120, 120))),
         Span::raw("  "),
         Span::styled("Enter", Style::default().fg(Color::Rgb(180, 0, 255))),
-        Span::raw(" Play options  "),
+        Span::raw(" "),
+        Span::styled(action_label, Style::default().fg(Color::Rgb(220, 220, 220))),
+        Span::raw("  "),
         Span::styled("+", Style::default().fg(Color::Rgb(180, 0, 255))),
         Span::raw(" Watchlist  "),
         Span::styled("h/l", Style::default().fg(Color::Rgb(180, 0, 255))),
         Span::raw(" Episode  "),
+        Span::styled("n", Style::default().fg(Color::Rgb(180, 0, 255))),
+        Span::raw(" Next  "),
         Span::styled("Tab", Style::default().fg(Color::Rgb(180, 0, 255))),
         Span::raw(" Focus related  "),
         Span::styled("/", Style::default().fg(Color::Rgb(180, 0, 255))),
@@ -131,9 +139,18 @@ fn render_metadata(frame: &mut Frame, area: Rect, state: &AppState, anime: &Anim
         .as_deref()
         .unwrap_or("No description available.")
         .chars()
-        .take(300)
+        .take(220)
         .collect::<String>();
     let dub_tag = if anime.has_dub() { "  Sub + Dub" } else { "  Sub only" };
+    let play_label = match state.selected_episode.unwrap_or(1) {
+        1 => " Start E1 ".to_string(),
+        ep => format!(" Continue E{} ", ep),
+    };
+    let watchlist_label = if state.in_watchlist {
+        " - Remove "
+    } else {
+        " + Watchlist "
+    };
 
     let playback_status = if state.now_playing.is_some()
         && state.last_played_anime_id == Some(anime.id)
@@ -145,7 +162,20 @@ fn render_metadata(frame: &mut Frame, area: Rect, state: &AppState, anime: &Anim
         None
     };
 
-    let mut lines = vec![
+    let mut lines = Vec::new();
+    if let Some(origin) = state.detail_origin_title.as_deref() {
+        lines.push(Line::from(vec![
+            Span::styled(
+                " From ",
+                Style::default().fg(Color::Black).bg(Color::Rgb(180, 0, 255)),
+            ),
+            Span::raw(" "),
+            Span::styled(origin, Style::default().fg(Color::Rgb(180, 180, 200))),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    lines.extend([
         Line::from(Span::styled(
             title,
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
@@ -157,7 +187,24 @@ fn render_metadata(frame: &mut Frame, area: Rect, state: &AppState, anime: &Anim
         Line::from(Span::styled(genres, Style::default().fg(Color::Rgb(180, 0, 255)))),
         Line::from(""),
         Line::from(Span::styled(desc, Style::default().fg(Color::Rgb(210, 210, 210)))),
-    ];
+    ]);
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            play_label,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            watchlist_label,
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::Rgb(60, 60, 60)),
+        ),
+    ]));
 
     if let Some(status_line) = playback_status {
         lines.push(Line::from(""));

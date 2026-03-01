@@ -128,6 +128,9 @@ pub struct AppState {
     /// Detail screen: selected "More Like This" card
     pub detail_related_cursor: usize,
 
+    /// Detail screen: breadcrumb title when opened from a related recommendation
+    pub detail_origin_title: Option<String>,
+
     /// Toast notification: (message, expiry unix timestamp)
     pub toast:            Option<(String, i64)>,
 
@@ -178,6 +181,7 @@ impl AppState {
             detail_recommendation_reasons: HashMap::new(),
             detail_focus:      DetailFocus::Episodes,
             detail_related_cursor: 0,
+            detail_origin_title: None,
             toast:            None,
             is_loading:       true,
             should_quit:      false,
@@ -254,6 +258,7 @@ impl AppState {
         self.detail_recommendation_reasons = HashMap::new();
         self.detail_focus = DetailFocus::Episodes;
         self.detail_related_cursor = 0;
+        self.detail_origin_title = None;
         self.selected_anime   = Some(anime);
         self.screen           = Screen::Detail;
     }

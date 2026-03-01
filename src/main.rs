@@ -614,15 +614,31 @@ async fn handle_detail(
         // Play
         KeyCode::Enter => {
             if state.detail_focus == state::DetailFocus::Related {
+                let origin_title = state
+                    .selected_anime
+                    .as_ref()
+                    .map(|anime| anime.display_title().to_string());
                 if let Some(anime) = state
                     .detail_recommendations
                     .get(state.detail_related_cursor)
                     .cloned()
                 {
                     open_detail_from_anime(state, anime, pool, tx).await;
+                    state.detail_origin_title = origin_title;
                 }
             } else {
                 begin_playback_flow(state, pool, cfg, false).await;
+            }
+        }
+
+        KeyCode::Char('n') => {
+            if state.detail_focus == state::DetailFocus::Episodes {
+                let current = state.selected_episode.unwrap_or(1);
+                let max = state.episode_list.last().copied().unwrap_or(1);
+                if current < max {
+                    state.selected_episode = Some(current + 1);
+                    begin_playback_flow(state, pool, cfg, false).await;
+                }
             }
         }
 

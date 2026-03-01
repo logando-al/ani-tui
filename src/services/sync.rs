@@ -8,7 +8,7 @@ use crate::{
     ui::home::HomeData,
 };
 use sqlx::SqlitePool;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 // ─── Season helpers ───────────────────────────────────────────────────────────
 
@@ -289,6 +289,41 @@ fn build_recommendations(
     (items, reasons)
 }
 
+fn build_progress_labels(
+    anime_rows: &[&[cache::Anime]],
+    watched_counts: &HashMap<i64, usize>,
+    resume_next: &HashMap<i64, u32>,
+) -> HashMap<i64, String> {
+    let mut labels = HashMap::new();
+    let mut seen = HashSet::new();
+
+    for row in anime_rows {
+        for anime in *row {
+            if !seen.insert(anime.id) {
+                continue;
+            }
+
+            if let Some(next_ep) = resume_next.get(&anime.id) {
+                labels.insert(anime.id, format!("E{} next", next_ep));
+                continue;
+            }
+
+            let watched = watched_counts.get(&anime.id).copied().unwrap_or(0);
+            if watched == 0 {
+                continue;
+            }
+
+            let label = match anime.episodes {
+                Some(total) => format!("{}/{}", watched, total),
+                None => format!("{} seen", watched),
+            };
+            labels.insert(anime.id, label);
+        }
+    }
+
+    labels
+}
+
 /// Build "More Like This" from the currently selected anime against the cached catalog.
 pub async fn load_more_like_this(
     pool:  &SqlitePool,
@@ -332,11 +367,12 @@ pub async fn sync_all(
     now:              i64,
 ) -> Result<HomeData> {
     // Run all syncs concurrently — each is independent
-    let (trending, popular, top_rated, seasonal, continue_watching, watchlist) = tokio::join!(
+    let (trending, popular, top_rated, seasonal, continue_entries, continue_watching, watchlist) = tokio::join!(
         sync_category(pool, client, meta::TRENDING,  trending_ttl, now),
         sync_category(pool, client, meta::POPULAR,   stable_ttl,   now),
         sync_category(pool, client, meta::TOP_RATED, stable_ttl,   now),
         sync_category(pool, client, meta::SEASONAL,  trending_ttl, now),
+        user::get_continue_watching(pool),
         load_continue_watching(pool),
         load_watchlist(pool),
     );
@@ -345,6 +381,7 @@ pub async fn sync_all(
     let popular           = popular.unwrap_or_default();
     let top_rated         = top_rated.unwrap_or_default();
     let seasonal          = seasonal.unwrap_or_default();
+    let continue_entries  = continue_entries.unwrap_or_default();
     let continue_watching = continue_watching.unwrap_or_default();
     let watchlist         = watchlist.unwrap_or_default();
     let featured          = trending.first().cloned();
@@ -356,17 +393,64 @@ pub async fn sync_all(
         &top_rated,
         &seasonal,
     );
+    let resume_next: HashMap<i64, u32> = continue_entries
+        .into_iter()
+        .map(|entry| {
+            let next = continue_watching
+                .iter()
+                .find(|anime| anime.id == entry.anime_id)
+                .map(|anime| {
+                    let next = (entry.last_episode as u32).saturating_add(1);
+                    match anime.episodes {
+                        Some(total) => next.min(total as u32).max(1),
+                        None => next.max(1),
+                    }
+                })
+                .unwrap_or_else(|| (entry.last_episode as u32).saturating_add(1).max(1));
+            (entry.anime_id, next)
+        })
+        .collect();
+    let mut all_ids = Vec::new();
+    for row in [
+        &continue_watching,
+        &watchlist,
+        &recommended,
+        &trending,
+        &popular,
+        &top_rated,
+        &seasonal,
+    ] {
+        all_ids.extend(row.iter().map(|anime| anime.id));
+    }
+    all_ids.sort_unstable();
+    all_ids.dedup();
+    let watched_counts = user::get_watched_counts(pool, &all_ids).await.unwrap_or_default();
+    let progress_labels = build_progress_labels(
+        &[
+            &continue_watching,
+            &watchlist,
+            &recommended,
+            &trending,
+            &popular,
+            &top_rated,
+            &seasonal,
+        ],
+        &watched_counts,
+        &resume_next,
+    );
 
     Ok(HomeData {
         featured,
         continue_watching,
+        watchlist,
         recommended,
         recommended_reasons,
+        progress_labels,
+        resume_next,
         trending,
         popular,
         top_rated,
         seasonal,
-        watchlist,
     })
 }
 

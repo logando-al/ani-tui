@@ -15,24 +15,26 @@ pub fn render_overlay(frame: &mut Frame) {
 
     let keybindings = vec![
         ("Navigation", vec![
-            ("j / ↓",      "Move down (rows / list)"),
-            ("k / ↑",      "Move up (rows / list)"),
-            ("h / ←",      "Scroll left (cards / episodes)"),
-            ("l / →",      "Scroll right (cards / episodes)"),
+            ("j / ↓",      "Move down (rows / menus)"),
+            ("k / ↑",      "Move up (rows / menus)"),
+            ("h / ←",      "Scroll left (cards / episodes / related)"),
+            ("l / →",      "Scroll right (cards / episodes / related)"),
+            ("Tab",        "Toggle Detail focus: Episodes / More Like This"),
         ]),
         ("Actions", vec![
-            ("Enter",      "Select / Play"),
+            ("Enter",      "Open detail (Home) / start or continue (Detail)"),
             ("d",          "Open detail from Home"),
             ("r",          "Resume from Home / next episode"),
             ("Esc",        "Back / Close"),
             ("/",          "Open search"),
             ("+",          "Add to / remove from watchlist"),
-            ("n",          "Next episode (playback)"),
+            ("n",          "Play next episode from Detail"),
             ("q",          "Quit / Stop playback"),
         ]),
         ("Other", vec![
             ("?",          "Toggle this help"),
             ("Shift+R",    "Refresh home screen"),
+            ("Search",     "Type normally, use ↑/↓ to pick results"),
             ("Ctrl+C",     "Force quit"),
         ]),
     ];

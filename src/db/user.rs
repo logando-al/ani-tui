@@ -3,6 +3,7 @@
 use crate::config::AudioMode;
 use crate::error::Result;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 
 /// A single history entry: which episode of which show was watched.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -157,6 +158,23 @@ pub async fn get_watched_episodes(pool: &SqlitePool, anime_id: i64) -> Result<Ve
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// Get watched-episode counts for multiple anime IDs.
+pub async fn get_watched_counts(pool: &SqlitePool, anime_ids: &[i64]) -> Result<HashMap<i64, usize>> {
+    let mut counts = HashMap::new();
+
+    for &anime_id in anime_ids {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(DISTINCT episode) FROM history WHERE anime_id = ?",
+        )
+        .bind(anime_id)
+        .fetch_one(pool)
+        .await?;
+        counts.insert(anime_id, count as usize);
+    }
+
+    Ok(counts)
 }
 
 /// Fetch all watchlist anime IDs, ordered by date added.
@@ -416,6 +434,41 @@ mod tests {
         let pool = setup().await;
         let eps = get_watched_episodes(&pool, 1).await.unwrap();
         assert!(eps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_watched_counts_returns_per_show_counts() {
+        let pool = init(":memory:").await.unwrap();
+
+        for id in [1i64, 2i64] {
+            let anime = Anime {
+                id,
+                title_english: Some(format!("Anime {}", id)),
+                title_romaji: format!("Anime {}", id),
+                title_native: None,
+                description: None,
+                episodes: Some(12),
+                status: Some("FINISHED".into()),
+                season: None,
+                season_year: None,
+                score: Some(80),
+                format: Some("TV".into()),
+                genres: "[]".into(),
+                cover_url: None,
+                cover_blob: None,
+                has_dub: 0,
+                updated_at: 1_000_000,
+            };
+            upsert_anime(&pool, &anime).await.unwrap();
+        }
+
+        record_watched(&pool, 1, 1, 100).await.unwrap();
+        record_watched(&pool, 1, 2, 200).await.unwrap();
+        record_watched(&pool, 2, 1, 300).await.unwrap();
+
+        let counts = get_watched_counts(&pool, &[1, 2]).await.unwrap();
+        assert_eq!(counts.get(&1), Some(&2));
+        assert_eq!(counts.get(&2), Some(&1));
     }
 
     #[tokio::test]
