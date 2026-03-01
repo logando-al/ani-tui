@@ -2,7 +2,7 @@
 
 use crate::db::cache::Anime;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Which screen is currently active.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,10 +28,18 @@ pub enum Screen {
 pub enum CategoryRow {
     ContinueWatching,
     Watchlist,
+    Recommended,
     Trending,
     Popular,
     TopRated,
     Seasonal,
+}
+
+/// Which section is currently focused on the Detail screen.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DetailFocus {
+    Episodes,
+    Related,
 }
 
 /// The full application state passed to every render call.
@@ -108,6 +116,18 @@ pub struct AppState {
     /// Home banner: watched episode count for the selected anime
     pub banner_progress:  Option<(i64, usize)>,
 
+    /// Detail screen: "More Like This" recommendations
+    pub detail_recommendations: Vec<Anime>,
+
+    /// Detail screen: reason labels keyed by anime ID
+    pub detail_recommendation_reasons: HashMap<i64, String>,
+
+    /// Detail screen: which area receives h/l and Enter
+    pub detail_focus: DetailFocus,
+
+    /// Detail screen: selected "More Like This" card
+    pub detail_related_cursor: usize,
+
     /// Toast notification: (message, expiry unix timestamp)
     pub toast:            Option<(String, i64)>,
 
@@ -154,6 +174,10 @@ impl AppState {
             cover_failed_anime_id: None,
             picker:           None,
             banner_progress:  None,
+            detail_recommendations: Vec::new(),
+            detail_recommendation_reasons: HashMap::new(),
+            detail_focus:      DetailFocus::Episodes,
+            detail_related_cursor: 0,
             toast:            None,
             is_loading:       true,
             should_quit:      false,
@@ -226,6 +250,10 @@ impl AppState {
             self.cover_state  = None;            // reset so stale image isn't shown
         }
         self.watched_episodes = HashSet::new();  // will be populated by the caller
+        self.detail_recommendations = Vec::new();
+        self.detail_recommendation_reasons = HashMap::new();
+        self.detail_focus = DetailFocus::Episodes;
+        self.detail_related_cursor = 0;
         self.selected_anime   = Some(anime);
         self.screen           = Screen::Detail;
     }

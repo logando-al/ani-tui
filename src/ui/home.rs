@@ -8,6 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
+use std::collections::HashMap;
 
 use crate::{
     db::cache::Anime,
@@ -219,6 +220,7 @@ fn active_banner_anime<'a>(state: &AppState, data: &'a HomeData) -> Option<&'a A
     let (row_key, items) = match state.active_row {
         CategoryRow::ContinueWatching => ("continue_watching", &data.continue_watching),
         CategoryRow::Watchlist        => ("watchlist", &data.watchlist),
+        CategoryRow::Recommended      => ("recommended", &data.recommended),
         CategoryRow::Trending         => ("trending", &data.trending),
         CategoryRow::Popular          => ("popular", &data.popular),
         CategoryRow::TopRated         => ("top_rated", &data.top_rated),
@@ -233,6 +235,7 @@ fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData)
     let rows: Vec<(&str, &str, &[Anime])> = vec![
         ("▶ Continue Watching", "continue_watching", &data.continue_watching),
         ("♥ My Watchlist",      "watchlist",         &data.watchlist),
+        ("✨ Because You Watched", "recommended",    &data.recommended),
         ("🔥 Trending",         "trending",          &data.trending),
         ("⭐ Popular",          "popular",           &data.popular),
         ("🏆 Top Rated",        "top_rated",         &data.top_rated),
@@ -264,6 +267,7 @@ fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData)
     let active_key = match state.active_row {
         CategoryRow::ContinueWatching => "continue_watching",
         CategoryRow::Watchlist        => "watchlist",
+        CategoryRow::Recommended      => "recommended",
         CategoryRow::Trending         => "trending",
         CategoryRow::Popular          => "popular",
         CategoryRow::TopRated         => "top_rated",
@@ -279,7 +283,16 @@ fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData)
 
     for (i, (label, key, items)) in visible.iter().skip(start_idx).take(visible_rows).enumerate() {
         if i < row_areas.len() {
-            render_row(frame, row_areas[i], state, label, key, items, *key == active_key);
+            render_row(
+                frame,
+                row_areas[i],
+                state,
+                label,
+                key,
+                items,
+                *key == active_key,
+                &data.recommended_reasons,
+            );
         }
     }
 }
@@ -293,6 +306,7 @@ fn render_row(
     key:       &str,
     items:     &[Anime],
     is_active: bool,
+    recommended_reasons: &HashMap<i64, String>,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -330,14 +344,19 @@ fn render_row(
             height: CARD_HEIGHT,
         };
         if rect.x + rect.width <= card_area.x + card_area.width {
-            render_card(frame, rect, anime, is_active && i == 0);
+            let reason = if key == "recommended" {
+                recommended_reasons.get(&anime.id).map(String::as_str)
+            } else {
+                None
+            };
+            render_card(frame, rect, anime, is_active && i == 0, reason);
         }
     }
 }
 
 /// Render a single anime card (cover + title + score).
 /// `selected` draws a purple border around the card to indicate it's the active selection.
-fn render_card(frame: &mut Frame, area: Rect, anime: &Anime, selected: bool) {
+fn render_card(frame: &mut Frame, area: Rect, anime: &Anime, selected: bool, reason: Option<&str>) {
     if area.height < 3 {
         return;
     }
@@ -378,17 +397,38 @@ fn render_card(frame: &mut Frame, area: Rect, anime: &Anime, selected: bool) {
     frame.render_widget(title, chunks[1]);
 
     // Score + format
-    let score_str = anime
-        .score
-        .map(|s| format!("★{:.1}", s as f32 / 10.0))
-        .unwrap_or_else(|| "★ N/A".to_string());
-    let fmt_str   = anime.format.as_deref().unwrap_or("TV");
+    let meta_text = match reason {
+        Some(label) => format!("• {}", truncate_reason(label, 18)),
+        None => {
+            let score_str = anime
+                .score
+                .map(|s| format!("★{:.1}", s as f32 / 10.0))
+                .unwrap_or_else(|| "★ N/A".to_string());
+            let fmt_str   = anime.format.as_deref().unwrap_or("TV");
+            format!("{} · {}", score_str, fmt_str)
+        }
+    };
+    let meta_color = if reason.is_some() {
+        Color::Rgb(180, 0, 255)
+    } else {
+        Color::Rgb(160, 160, 160)
+    };
     let meta      = Paragraph::new(Span::styled(
-        format!("{} · {}", score_str, fmt_str),
-        Style::default().fg(Color::Rgb(160, 160, 160)),
+        meta_text,
+        Style::default().fg(meta_color),
     ))
     .style(Style::default().bg(Color::Rgb(15, 15, 20)));
     frame.render_widget(meta, chunks[2]);
+}
+
+fn truncate_reason(reason: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = reason.chars().collect();
+    if chars.len() <= max_chars {
+        reason.to_string()
+    } else {
+        let truncated: String = chars[..max_chars.saturating_sub(1)].iter().collect();
+        format!("{}…", truncated)
+    }
 }
 
 /// All data needed to render the home screen.
@@ -396,6 +436,8 @@ pub struct HomeData {
     pub featured:          Option<Anime>,
     pub continue_watching: Vec<Anime>,
     pub watchlist:         Vec<Anime>,
+    pub recommended:      Vec<Anime>,
+    pub recommended_reasons: HashMap<i64, String>,
     pub trending:          Vec<Anime>,
     pub popular:           Vec<Anime>,
     pub top_rated:         Vec<Anime>,
@@ -408,6 +450,8 @@ impl HomeData {
             featured:          None,
             continue_watching: Vec::new(),
             watchlist:         Vec::new(),
+            recommended:      Vec::new(),
+            recommended_reasons: HashMap::new(),
             trending:          Vec::new(),
             popular:           Vec::new(),
             top_rated:         Vec::new(),

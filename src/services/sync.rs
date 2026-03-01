@@ -8,6 +8,7 @@ use crate::{
     ui::home::HomeData,
 };
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 
 // ─── Season helpers ───────────────────────────────────────────────────────────
 
@@ -118,6 +119,207 @@ pub async fn load_watchlist(pool: &SqlitePool) -> Result<Vec<cache::Anime>> {
     Ok(result)
 }
 
+fn collect_candidate_pool(
+    trending:  &[cache::Anime],
+    popular:   &[cache::Anime],
+    top_rated: &[cache::Anime],
+    seasonal:  &[cache::Anime],
+) -> Vec<cache::Anime> {
+    let mut candidates = Vec::new();
+    let mut seen_ids = HashSet::new();
+    for row in [trending, popular, top_rated, seasonal] {
+        for anime in row {
+            if seen_ids.insert(anime.id) {
+                candidates.push(anime.clone());
+            }
+        }
+    }
+
+    candidates
+}
+
+fn best_reason(
+    anime:          &cache::Anime,
+    shared_genres:  i64,
+    same_format:    bool,
+    trending_ids:   &HashSet<i64>,
+    popular_ids:    &HashSet<i64>,
+    top_rated_ids:  &HashSet<i64>,
+    seasonal_ids:   &HashSet<i64>,
+) -> String {
+    if shared_genres > 0 {
+        "Shared genres".to_string()
+    } else if same_format {
+        format!("More {} {}", anime.format.as_deref().unwrap_or("anime"), "energy")
+    } else if trending_ids.contains(&anime.id) {
+        "Trending now".to_string()
+    } else if top_rated_ids.contains(&anime.id) {
+        "Top rated".to_string()
+    } else if seasonal_ids.contains(&anime.id) {
+        "Seasonal pick".to_string()
+    } else if popular_ids.contains(&anime.id) {
+        "Popular now".to_string()
+    } else {
+        "Picked for you".to_string()
+    }
+}
+
+fn score_candidates(
+    seeds:          &[cache::Anime],
+    excluded_ids:   &HashSet<i64>,
+    candidates:     Vec<cache::Anime>,
+    trending:       &[cache::Anime],
+    popular:        &[cache::Anime],
+    top_rated:      &[cache::Anime],
+    seasonal:       &[cache::Anime],
+) -> Vec<(cache::Anime, String)> {
+    if seeds.is_empty() {
+        return Vec::new();
+    }
+
+    let seed_limit = seeds.len();
+
+    let trending_ids: HashSet<i64> = trending.iter().map(|anime| anime.id).collect();
+    let popular_ids: HashSet<i64> = popular.iter().map(|anime| anime.id).collect();
+    let top_rated_ids: HashSet<i64> = top_rated.iter().map(|anime| anime.id).collect();
+    let seasonal_ids: HashSet<i64> = seasonal.iter().map(|anime| anime.id).collect();
+
+    let mut scored = Vec::new();
+    for anime in candidates {
+        if excluded_ids.contains(&anime.id) {
+            continue;
+        }
+
+        let candidate_genres: HashSet<String> = anime.genre_list().into_iter().collect();
+        let mut score = anime.score.unwrap_or(0) / 10;
+        let mut best_shared_genres = 0i64;
+        let mut best_same_format = false;
+
+        for (idx, seed) in seeds.iter().take(seed_limit).enumerate() {
+            let weight = (seed_limit - idx) as i64;
+            let seed_genres: HashSet<String> = seed.genre_list().into_iter().collect();
+            let shared_genres = seed_genres.intersection(&candidate_genres).count() as i64;
+            best_shared_genres = best_shared_genres.max(shared_genres);
+            score += shared_genres * weight * 3;
+
+            if seed.format == anime.format && anime.format.is_some() {
+                best_same_format = true;
+                score += weight * 2;
+            }
+            if seed.season == anime.season && anime.season.is_some() {
+                score += weight;
+            }
+            if let (Some(seed_year), Some(candidate_year)) = (seed.season_year, anime.season_year) {
+                if (seed_year - candidate_year).abs() <= 1 {
+                    score += weight;
+                }
+            }
+        }
+
+        if trending_ids.contains(&anime.id) {
+            score += 4;
+        }
+        if popular_ids.contains(&anime.id) {
+            score += 3;
+        }
+        if top_rated_ids.contains(&anime.id) {
+            score += 3;
+        }
+        if seasonal_ids.contains(&anime.id) {
+            score += 2;
+        }
+
+        if score > 0 {
+            let reason = best_reason(
+                &anime,
+                best_shared_genres,
+                best_same_format,
+                &trending_ids,
+                &popular_ids,
+                &top_rated_ids,
+                &seasonal_ids,
+            );
+            scored.push((score, anime, reason));
+        }
+    }
+
+    scored.sort_by(|(left_score, left_anime, _), (right_score, right_anime, _)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| right_anime.score.unwrap_or(0).cmp(&left_anime.score.unwrap_or(0)))
+            .then_with(|| left_anime.display_title().cmp(right_anime.display_title()))
+    });
+
+    scored
+        .into_iter()
+        .take(20)
+        .map(|(_, anime, reason)| (anime, reason))
+        .collect()
+}
+
+/// Build a lightweight "Because You Watched" row from recent watch behavior.
+fn build_recommendations(
+    continue_watching: &[cache::Anime],
+    watchlist:         &[cache::Anime],
+    trending:          &[cache::Anime],
+    popular:           &[cache::Anime],
+    top_rated:         &[cache::Anime],
+    seasonal:          &[cache::Anime],
+) -> (Vec<cache::Anime>, std::collections::HashMap<i64, String>) {
+    let seeds: Vec<cache::Anime> = continue_watching.iter().take(5).cloned().collect();
+    let mut excluded_ids: HashSet<i64> = continue_watching.iter().map(|anime| anime.id).collect();
+    excluded_ids.extend(watchlist.iter().map(|anime| anime.id));
+
+    let scored = score_candidates(
+        &seeds,
+        &excluded_ids,
+        collect_candidate_pool(trending, popular, top_rated, seasonal),
+        trending,
+        popular,
+        top_rated,
+        seasonal,
+    );
+
+    let mut reasons = std::collections::HashMap::new();
+    let mut items = Vec::new();
+    for (anime, reason) in scored {
+        reasons.insert(anime.id, reason);
+        items.push(anime);
+    }
+    (items, reasons)
+}
+
+/// Build "More Like This" from the currently selected anime against the cached catalog.
+pub async fn load_more_like_this(
+    pool:  &SqlitePool,
+    anime: &cache::Anime,
+) -> Result<Vec<(cache::Anime, String)>> {
+    let trending = cache::get_category(pool, meta::TRENDING).await.unwrap_or_default();
+    let popular = cache::get_category(pool, meta::POPULAR).await.unwrap_or_default();
+    let top_rated = cache::get_category(pool, meta::TOP_RATED).await.unwrap_or_default();
+    let seasonal = cache::get_category(pool, meta::SEASONAL).await.unwrap_or_default();
+
+    let mut excluded_ids = HashSet::from([anime.id]);
+    excluded_ids.extend(
+        user::get_continue_watching(pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| entry.anime_id),
+    );
+    excluded_ids.extend(user::get_watchlist(pool).await.unwrap_or_default());
+
+    Ok(score_candidates(
+        std::slice::from_ref(anime),
+        &excluded_ids,
+        collect_candidate_pool(&trending, &popular, &top_rated, &seasonal),
+        &trending,
+        &popular,
+        &top_rated,
+        &seasonal,
+    ))
+}
+
 // ─── Sync all + build HomeData ────────────────────────────────────────────────
 
 /// Sync every category (respecting TTLs) and return a fully populated HomeData.
@@ -146,10 +348,20 @@ pub async fn sync_all(
     let continue_watching = continue_watching.unwrap_or_default();
     let watchlist         = watchlist.unwrap_or_default();
     let featured          = trending.first().cloned();
+    let (recommended, recommended_reasons) = build_recommendations(
+        &continue_watching,
+        &watchlist,
+        &trending,
+        &popular,
+        &top_rated,
+        &seasonal,
+    );
 
     Ok(HomeData {
         featured,
         continue_watching,
+        recommended,
+        recommended_reasons,
         trending,
         popular,
         top_rated,
@@ -285,6 +497,27 @@ mod tests {
         }
     }
 
+    fn scored_anime(id: i64, title: &str, genres: &[&str], format: &str, score: i64) -> cache::Anime {
+        cache::Anime {
+            id,
+            title_english: Some(title.to_string()),
+            title_romaji:  title.to_string(),
+            title_native:  None,
+            description:   None,
+            episodes:      Some(12),
+            status:        Some("FINISHED".into()),
+            season:        Some("SPRING".into()),
+            season_year:   Some(2024),
+            score:         Some(score),
+            format:        Some(format.into()),
+            genres:        serde_json::to_string(&genres).unwrap(),
+            cover_url:     None,
+            cover_blob:    None,
+            has_dub:       0,
+            updated_at:    1_000_000,
+        }
+    }
+
     #[tokio::test]
     async fn test_load_continue_watching_returns_anime() {
         use crate::db::{init, cache::upsert_anime};
@@ -341,5 +574,46 @@ mod tests {
         let pool = init(":memory:").await.unwrap();
         let result = load_watchlist(&pool).await.unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_build_recommendations_prefers_shared_genres() {
+        let continue_watching = vec![scored_anime(1, "Seed", &["Action", "Drama"], "TV", 85)];
+        let watchlist = Vec::new();
+        let trending = vec![
+            scored_anime(2, "Strong Match", &["Action", "Drama"], "TV", 80),
+            scored_anime(3, "Weak Match", &["Slice of Life"], "TV", 95),
+        ];
+
+        let (recommended, reasons) = build_recommendations(
+            &continue_watching,
+            &watchlist,
+            &trending,
+            &[],
+            &[],
+            &[],
+        );
+
+        assert_eq!(recommended.first().map(|anime| anime.id), Some(2));
+        assert!(!recommended.iter().any(|anime| anime.id == 1));
+        assert_eq!(reasons.get(&2).map(String::as_str), Some("Shared genres"));
+    }
+
+    #[test]
+    fn test_build_recommendations_skips_watchlist_items() {
+        let continue_watching = vec![scored_anime(1, "Seed", &["Action"], "TV", 85)];
+        let watchlist = vec![scored_anime(2, "Saved", &["Action"], "TV", 90)];
+        let trending = vec![scored_anime(2, "Saved", &["Action"], "TV", 90)];
+
+        let (recommended, _reasons) = build_recommendations(
+            &continue_watching,
+            &watchlist,
+            &trending,
+            &[],
+            &[],
+            &[],
+        );
+
+        assert!(recommended.is_empty());
     }
 }

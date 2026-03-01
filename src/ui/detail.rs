@@ -8,7 +8,11 @@ use ratatui::{
     Frame,
 };
 
-use crate::{db::cache::Anime, state::AppState, ui::components::cover::HalfblockCover};
+use crate::{
+    db::cache::Anime,
+    state::{AppState, DetailFocus},
+    ui::components::cover::HalfblockCover,
+};
 
 /// Render the detail screen.
 pub fn render(frame: &mut Frame, state: &mut AppState) {
@@ -28,6 +32,8 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         Span::raw(" Watchlist  "),
         Span::styled("h/l", Style::default().fg(Color::Rgb(180, 0, 255))),
         Span::raw(" Episode  "),
+        Span::styled("Tab", Style::default().fg(Color::Rgb(180, 0, 255))),
+        Span::raw(" Focus related  "),
         Span::styled("/", Style::default().fg(Color::Rgb(180, 0, 255))),
         Span::raw(" Search  "),
         Span::styled("?", Style::default().fg(Color::Rgb(180, 0, 255))),
@@ -40,13 +46,18 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         .constraints([
             Constraint::Length(1),  // hint bar
             Constraint::Length(14), // top info panel
+            Constraint::Length(if state.detail_recommendations.is_empty() { 0 } else { 5 }),
             Constraint::Min(0),     // episode list
         ])
         .split(area);
 
     frame.render_widget(hint, chunks[0]);
     render_info(frame, chunks[1], state, &anime);
-    render_episodes(frame, chunks[2], state, &anime);
+    if !state.detail_recommendations.is_empty() {
+        render_related(frame, chunks[2], state);
+    }
+    let episodes_idx = if state.detail_recommendations.is_empty() { 2 } else { 3 };
+    render_episodes(frame, chunks[episodes_idx], state, &anime);
 }
 
 /// Top section: cover + metadata side by side.
@@ -167,6 +178,73 @@ fn render_metadata(frame: &mut Frame, area: Rect, state: &AppState, anime: &Anim
         .block(Block::default().style(Style::default().bg(Color::Rgb(10, 10, 16))))
         .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(para, area);
+}
+
+fn render_related(frame: &mut Frame, area: Rect, state: &AppState) {
+    let block = Block::default()
+        .title(Span::styled(
+            " More Like This ",
+            Style::default().fg(Color::Rgb(220, 220, 220)).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
+        .style(Style::default().bg(Color::Rgb(10, 10, 16)));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height < 3 || inner.width < 12 {
+        return;
+    }
+
+    let card_width: u16 = 24;
+    let gap: u16 = 1;
+    let visible = (inner.width / (card_width + gap)).max(1) as usize;
+
+    for (idx, anime) in state.detail_recommendations.iter().take(visible).enumerate() {
+        let x = inner.x + idx as u16 * (card_width + gap);
+        if x + card_width > inner.x + inner.width {
+            break;
+        }
+
+        let rect = Rect {
+            x,
+            y: inner.y,
+            width: card_width,
+            height: inner.height.min(3),
+        };
+
+        let reason = state
+            .detail_recommendation_reasons
+            .get(&anime.id)
+            .map(String::as_str)
+            .unwrap_or("Picked for you");
+
+        let lines = vec![
+            Line::from(Span::styled(
+                anime.short_title(),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                reason,
+                Style::default().fg(Color::Rgb(180, 0, 255)),
+            )),
+        ];
+
+        let is_selected = state.detail_focus == DetailFocus::Related && idx == state.detail_related_cursor;
+        let item = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(if is_selected {
+                        Style::default().fg(Color::Rgb(180, 0, 255))
+                    } else {
+                        Style::default().fg(Color::Rgb(45, 45, 65))
+                    })
+                    .style(Style::default().bg(Color::Rgb(14, 14, 20))),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
+        frame.render_widget(item, rect);
+    }
 }
 
 /// Episode list section — horizontal scrolling pills.

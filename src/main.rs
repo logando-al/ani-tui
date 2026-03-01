@@ -367,6 +367,7 @@ fn active_row_key_max(state: &AppState, data: &ui::home::HomeData) -> (String, u
     match state.active_row {
         ContinueWatching => ("continue_watching".to_string(), data.continue_watching.len()),
         Watchlist        => ("watchlist".to_string(),         data.watchlist.len()),
+        Recommended      => ("recommended".to_string(),       data.recommended.len()),
         Trending         => ("trending".to_string(),          data.trending.len()),
         Popular          => ("popular".to_string(),           data.popular.len()),
         TopRated         => ("top_rated".to_string(),         data.top_rated.len()),
@@ -382,6 +383,7 @@ fn active_anime(state: &AppState, data: &ui::home::HomeData) -> Option<db::cache
     let list     = match state.active_row {
         ContinueWatching => &data.continue_watching,
         Watchlist        => &data.watchlist,
+        Recommended      => &data.recommended,
         Trending         => &data.trending,
         Popular          => &data.popular,
         TopRated         => &data.top_rated,
@@ -396,6 +398,7 @@ async fn open_detail_from_anime(
     pool:  &sqlx::SqlitePool,
     tx:    &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
+    let related = services::sync::load_more_like_this(pool, &anime).await.unwrap_or_default();
     let in_wl = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
     let watched = db::user::get_watched_episodes(pool, anime.id).await.unwrap_or_default();
     state.in_watchlist = in_wl;
@@ -405,6 +408,14 @@ async fn open_detail_from_anime(
     }
     state.open_detail(anime);
     state.set_watched_episodes(watched.into_iter().map(|e| e as u32).collect());
+    state.detail_recommendation_reasons = related
+        .iter()
+        .map(|(anime, reason)| (anime.id, reason.clone()))
+        .collect();
+    state.detail_recommendations = related
+        .into_iter()
+        .map(|(anime, _)| anime)
+        .collect();
 }
 
 async fn begin_playback_flow(
@@ -505,6 +516,7 @@ fn row_len(row: &state::CategoryRow, data: &ui::home::HomeData) -> usize {
     match row {
         ContinueWatching => data.continue_watching.len(),
         Watchlist        => data.watchlist.len(),
+        Recommended      => data.recommended.len(),
         Trending         => data.trending.len(),
         Popular          => data.popular.len(),
         TopRated         => data.top_rated.len(),
@@ -522,7 +534,7 @@ fn next_non_empty_row(
 ) -> state::CategoryRow {
     use state::CategoryRow::*;
     let order: &[state::CategoryRow] = &[
-        ContinueWatching, Watchlist, Trending, Popular, TopRated, Seasonal,
+        ContinueWatching, Watchlist, Recommended, Trending, Popular, TopRated, Seasonal,
     ];
     let pos = order.iter().position(|r| r == current).unwrap_or(2) as i32;
     let mut i = pos + direction;
@@ -549,35 +561,69 @@ async fn handle_detail(
         KeyCode::Esc | KeyCode::Char('q') => state.go_back(),
         KeyCode::Char('/')                => state.open_search(),
         KeyCode::Char('?')               => state.screen = Screen::Help,
+        KeyCode::Tab => {
+            if !state.detail_recommendations.is_empty() {
+                state.detail_focus = match state.detail_focus {
+                    state::DetailFocus::Episodes => state::DetailFocus::Related,
+                    state::DetailFocus::Related => state::DetailFocus::Episodes,
+                };
+            }
+        }
 
         // Episode navigation
         KeyCode::Char('l') | KeyCode::Right => {
-            if let Some(ep) = state.selected_episode {
-                let max           = state.episode_list.last().copied().unwrap_or(1);
-                let pills_per_row = 10usize;
-                if ep < max {
-                    state.selected_episode = Some(ep + 1);
-                    if ep as usize >= state.episode_offset + pills_per_row {
-                        state.episode_offset += pills_per_row;
+            match state.detail_focus {
+                state::DetailFocus::Episodes => {
+                    if let Some(ep) = state.selected_episode {
+                        let max           = state.episode_list.last().copied().unwrap_or(1);
+                        let pills_per_row = 10usize;
+                        if ep < max {
+                            state.selected_episode = Some(ep + 1);
+                            if ep as usize >= state.episode_offset + pills_per_row {
+                                state.episode_offset += pills_per_row;
+                            }
+                        }
+                    }
+                }
+                state::DetailFocus::Related => {
+                    if state.detail_related_cursor + 1 < state.detail_recommendations.len() {
+                        state.detail_related_cursor += 1;
                     }
                 }
             }
         }
         KeyCode::Char('h') | KeyCode::Left => {
-            if let Some(ep) = state.selected_episode {
-                let pills_per_row = 10usize;
-                if ep > 1 {
-                    state.selected_episode = Some(ep - 1);
-                    if (ep as usize).saturating_sub(1) < state.episode_offset {
-                        state.episode_offset = state.episode_offset.saturating_sub(pills_per_row);
+            match state.detail_focus {
+                state::DetailFocus::Episodes => {
+                    if let Some(ep) = state.selected_episode {
+                        let pills_per_row = 10usize;
+                        if ep > 1 {
+                            state.selected_episode = Some(ep - 1);
+                            if (ep as usize).saturating_sub(1) < state.episode_offset {
+                                state.episode_offset = state.episode_offset.saturating_sub(pills_per_row);
+                            }
+                        }
                     }
+                }
+                state::DetailFocus::Related => {
+                    state.detail_related_cursor = state.detail_related_cursor.saturating_sub(1);
                 }
             }
         }
 
         // Play
         KeyCode::Enter => {
-            begin_playback_flow(state, pool, cfg, false).await;
+            if state.detail_focus == state::DetailFocus::Related {
+                if let Some(anime) = state
+                    .detail_recommendations
+                    .get(state.detail_related_cursor)
+                    .cloned()
+                {
+                    open_detail_from_anime(state, anime, pool, tx).await;
+                }
+            } else {
+                begin_playback_flow(state, pool, cfg, false).await;
+            }
         }
 
         // Watchlist toggle — updates home row immediately via WatchlistUpdated
