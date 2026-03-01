@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 # TUI
-ratatui       = "0.29"
+ratatui       = "0.28"
 crossterm     = "0.28"
 ratatui-image = { version = "2", features = ["crossterm"] }
 image         = "0.25"

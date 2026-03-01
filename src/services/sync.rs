@@ -3,7 +3,7 @@
 
 use crate::{
     api::anilist::AniListClient,
-    db::{cache, sync as meta},
+    db::{cache, sync as meta, user},
     error::Result,
     ui::home::HomeData,
 };
@@ -87,6 +87,32 @@ pub async fn sync_category(
     cache::get_category(pool, category).await
 }
 
+// ─── User-data helpers ────────────────────────────────────────────────────────
+
+/// Resolve Continue Watching entries into full Anime structs (max 20, most recent first).
+pub async fn load_continue_watching(pool: &SqlitePool) -> Result<Vec<cache::Anime>> {
+    let entries = user::get_continue_watching(pool).await?;
+    let mut result = Vec::new();
+    for entry in entries.iter().take(20) {
+        if let Some(anime) = cache::get_anime(pool, entry.anime_id).await? {
+            result.push(anime);
+        }
+    }
+    Ok(result)
+}
+
+/// Resolve Watchlist IDs into full Anime structs (max 20, most recently added first).
+pub async fn load_watchlist(pool: &SqlitePool) -> Result<Vec<cache::Anime>> {
+    let ids = user::get_watchlist(pool).await?;
+    let mut result = Vec::new();
+    for id in ids.iter().take(20) {
+        if let Some(anime) = cache::get_anime(pool, *id).await? {
+            result.push(anime);
+        }
+    }
+    Ok(result)
+}
+
 // ─── Sync all + build HomeData ────────────────────────────────────────────────
 
 /// Sync every category (respecting TTLs) and return a fully populated HomeData.
@@ -98,27 +124,32 @@ pub async fn sync_all(
     stable_ttl:       u64,
     now:              i64,
 ) -> Result<HomeData> {
-    // Run all category syncs — each is independent (one failure doesn't block others)
-    let (trending, popular, top_rated, seasonal) = tokio::join!(
+    // Run all syncs concurrently — each is independent
+    let (trending, popular, top_rated, seasonal, continue_watching, watchlist) = tokio::join!(
         sync_category(pool, client, meta::TRENDING,  trending_ttl, now),
         sync_category(pool, client, meta::POPULAR,   stable_ttl,   now),
         sync_category(pool, client, meta::TOP_RATED, stable_ttl,   now),
         sync_category(pool, client, meta::SEASONAL,  trending_ttl, now),
+        load_continue_watching(pool),
+        load_watchlist(pool),
     );
 
-    let trending  = trending.unwrap_or_default();
-    let popular   = popular.unwrap_or_default();
-    let top_rated = top_rated.unwrap_or_default();
-    let seasonal  = seasonal.unwrap_or_default();
-    let featured  = trending.first().cloned();
+    let trending          = trending.unwrap_or_default();
+    let popular           = popular.unwrap_or_default();
+    let top_rated         = top_rated.unwrap_or_default();
+    let seasonal          = seasonal.unwrap_or_default();
+    let continue_watching = continue_watching.unwrap_or_default();
+    let watchlist         = watchlist.unwrap_or_default();
+    let featured          = trending.first().cloned();
 
     Ok(HomeData {
         featured,
-        continue_watching: vec![], // populated separately from user data
+        continue_watching,
         trending,
         popular,
         top_rated,
         seasonal,
+        watchlist,
     })
 }
 
@@ -224,5 +255,86 @@ mod tests {
         let results = sync_category(&pool, &client, meta::TRENDING, 86_400, now + 60).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, 1);
+    }
+
+    // ── load_continue_watching ────────────────────────────────────────────────
+
+    fn make_anime(pool_ref: &sqlx::SqlitePool, id: i64) -> cache::Anime {
+        cache::Anime {
+            id,
+            title_english: Some(format!("Anime {}", id)),
+            title_romaji:  format!("Anime {}", id),
+            title_native:  None,
+            description:   None,
+            episodes:      Some(12),
+            status:        Some("FINISHED".into()),
+            season:        None,
+            season_year:   None,
+            score:         Some(80),
+            format:        Some("TV".into()),
+            genres:        "[]".into(),
+            cover_url:     None,
+            cover_blob:    None,
+            has_dub:       0,
+            updated_at:    1_000_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_load_continue_watching_returns_anime() {
+        use crate::db::{init, cache::upsert_anime};
+        let pool = init(":memory:").await.unwrap();
+        let anime = make_anime(&pool, 1);
+        upsert_anime(&pool, &anime).await.unwrap();
+        user::record_watched(&pool, 1, 3, 1_000_000).await.unwrap();
+
+        let result = load_continue_watching(&pool).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_load_continue_watching_empty_when_no_history() {
+        use crate::db::init;
+        let pool = init(":memory:").await.unwrap();
+        let result = load_continue_watching(&pool).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_load_continue_watching_ordered_by_recency() {
+        use crate::db::{init, cache::upsert_anime};
+        let pool = init(":memory:").await.unwrap();
+        for id in [1i64, 2i64] {
+            upsert_anime(&pool, &make_anime(&pool, id)).await.unwrap();
+        }
+        user::record_watched(&pool, 1, 1, 1_000).await.unwrap();
+        user::record_watched(&pool, 2, 1, 2_000).await.unwrap(); // more recent
+
+        let result = load_continue_watching(&pool).await.unwrap();
+        assert_eq!(result[0].id, 2); // most recent first
+        assert_eq!(result[1].id, 1);
+    }
+
+    // ── load_watchlist ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_load_watchlist_returns_anime() {
+        use crate::db::{init, cache::upsert_anime};
+        let pool = init(":memory:").await.unwrap();
+        upsert_anime(&pool, &make_anime(&pool, 1)).await.unwrap();
+        user::add_to_watchlist(&pool, 1, 1_000_000).await.unwrap();
+
+        let result = load_watchlist(&pool).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_load_watchlist_empty_when_none_added() {
+        use crate::db::init;
+        let pool = init(":memory:").await.unwrap();
+        let result = load_watchlist(&pool).await.unwrap();
+        assert!(result.is_empty());
     }
 }

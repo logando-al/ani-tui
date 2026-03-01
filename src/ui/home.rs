@@ -116,11 +116,12 @@ fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>) {
 /// Render all category rows.
 fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData) {
     let rows: Vec<(&str, &str, &[Anime])> = vec![
-        ("Continue Watching", "continue_watching", &data.continue_watching),
-        ("🔥 Trending",       "trending",          &data.trending),
-        ("⭐ Popular",        "popular",           &data.popular),
-        ("🏆 Top Rated",      "top_rated",         &data.top_rated),
-        ("📅 Seasonal",       "seasonal",          &data.seasonal),
+        ("▶ Continue Watching", "continue_watching", &data.continue_watching),
+        ("♥ My Watchlist",      "watchlist",         &data.watchlist),
+        ("🔥 Trending",         "trending",          &data.trending),
+        ("⭐ Popular",          "popular",           &data.popular),
+        ("🏆 Top Rated",        "top_rated",         &data.top_rated),
+        ("📅 Seasonal",         "seasonal",          &data.seasonal),
     ];
 
     // Filter out empty rows
@@ -239,6 +240,7 @@ fn render_card(frame: &mut Frame, area: Rect, anime: &Anime) {
 pub struct HomeData {
     pub featured:          Option<Anime>,
     pub continue_watching: Vec<Anime>,
+    pub watchlist:         Vec<Anime>,
     pub trending:          Vec<Anime>,
     pub popular:           Vec<Anime>,
     pub top_rated:         Vec<Anime>,
@@ -250,6 +252,7 @@ impl HomeData {
         Self {
             featured:          None,
             continue_watching: Vec::new(),
+            watchlist:         Vec::new(),
             trending:          Vec::new(),
             popular:           Vec::new(),
             top_rated:         Vec::new(),

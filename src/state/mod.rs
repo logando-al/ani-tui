@@ -1,6 +1,7 @@
 //! Application state — the single source of truth for the TUI.
 
 use crate::db::cache::Anime;
+use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
 
 /// Which screen is currently active.
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +22,7 @@ pub enum Screen {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CategoryRow {
     ContinueWatching,
+    Watchlist,
     Trending,
     Popular,
     TopRated,
@@ -68,6 +70,21 @@ pub struct AppState {
     /// Playback: log lines from ani-cli stdout/stderr
     pub playback_logs:    Vec<String>,
 
+    /// Detail: whether the selected anime is in the watchlist
+    pub in_watchlist:     bool,
+
+    /// Cover image: ratatui-image stateful protocol (Kitty / Sixel / Halfblock)
+    pub cover_state:      Option<Box<dyn StatefulProtocol>>,
+
+    /// Cover image: which anime ID the current cover_state belongs to
+    pub cover_anime_id:   Option<i64>,
+
+    /// Terminal image picker (initialized once at startup)
+    pub picker:           Option<Picker>,
+
+    /// Toast notification: (message, expiry unix timestamp)
+    pub toast:            Option<(String, i64)>,
+
     /// Whether the app is loading home data (shows spinner)
     pub is_loading:       bool,
 
@@ -91,9 +108,41 @@ impl AppState {
             player_stop:      None,
             now_playing:      None,
             playback_logs:    Vec::new(),
+            in_watchlist:     false,
+            cover_state:      None,
+            cover_anime_id:   None,
+            picker:           None,
+            toast:            None,
             is_loading:       true,
             should_quit:      false,
         }
+    }
+
+    /// Show a toast notification (auto-dismissed after 4 seconds).
+    pub fn show_toast(&mut self, msg: impl Into<String>, now: i64) {
+        self.toast = Some((msg.into(), now + 4));
+    }
+
+    /// Check and clear expired toasts. Returns Some(msg) if a toast is active.
+    pub fn active_toast(&mut self, now: i64) -> Option<&str> {
+        // Check expiry first, then clear (two separate borrows to satisfy NLL)
+        let expired = matches!(&self.toast, Some((_, expiry)) if now >= *expiry);
+        if expired {
+            self.toast = None;
+        }
+        match &self.toast {
+            Some((msg, _)) => Some(msg.as_str()),
+            None           => None,
+        }
+    }
+
+    /// True if this terminal supports real images (Kitty / Sixel / Iterm2).
+    pub fn has_image_support(&self) -> bool {
+        use ratatui_image::picker::ProtocolType;
+        self.picker
+            .as_ref()
+            .map(|p| p.protocol_type != ProtocolType::Halfblocks)
+            .unwrap_or(false)
     }
 
     /// Stop any currently running player.
@@ -124,6 +173,8 @@ impl AppState {
         self.episode_list     = (1..=total.max(1)).collect();
         self.selected_episode = Some(1);
         self.episode_offset   = 0;
+        self.cover_anime_id   = Some(anime.id);
+        self.cover_state      = None; // reset so stale image isn't shown
         self.selected_anime   = Some(anime);
         self.screen           = Screen::Detail;
     }

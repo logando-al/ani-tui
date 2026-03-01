@@ -11,8 +11,8 @@ use ratatui::{
 use crate::{db::cache::Anime, state::AppState, ui::components::cover::HalfblockCover};
 
 /// Render the detail screen.
-pub fn render(frame: &mut Frame, state: &AppState) {
-    let Some(anime) = &state.selected_anime else {
+pub fn render(frame: &mut Frame, state: &mut AppState) {
+    let Some(anime) = state.selected_anime.clone() else {
         return;
     };
 
@@ -41,12 +41,12 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         .split(area);
 
     frame.render_widget(hint, chunks[0]);
-    render_info(frame, chunks[1], anime);
-    render_episodes(frame, chunks[2], state, anime);
+    render_info(frame, chunks[1], state, &anime);
+    render_episodes(frame, chunks[2], state, &anime);
 }
 
 /// Top section: cover + metadata side by side.
-fn render_info(frame: &mut Frame, area: Rect, anime: &Anime) {
+fn render_info(frame: &mut Frame, area: Rect, state: &mut AppState, anime: &Anime) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -55,11 +55,18 @@ fn render_info(frame: &mut Frame, area: Rect, anime: &Anime) {
         ])
         .split(area);
 
-    // Cover
-    frame.render_widget(
-        HalfblockCover { anime_id: anime.id, title: anime.display_title() },
-        cols[0],
-    );
+    // Cover: real image when terminal supports it, halfblock otherwise
+    if state.has_image_support() && state.cover_state.is_some() {
+        if let Some(ref mut cover) = state.cover_state {
+            let image_widget = ratatui_image::StatefulImage::new(None);
+            frame.render_stateful_widget(image_widget, cols[0], cover);
+        }
+    } else {
+        frame.render_widget(
+            HalfblockCover { anime_id: anime.id, title: anime.display_title() },
+            cols[0],
+        );
+    }
 
     // Metadata
     render_metadata(frame, cols[1], anime);

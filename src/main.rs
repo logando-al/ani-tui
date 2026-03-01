@@ -21,7 +21,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// Messages sent from background tokio tasks to the UI event loop.
 enum AppMessage {
-    /// Home screen data loaded/refreshed
+    /// Home screen data loaded / refreshed
     HomeData(ui::home::HomeData),
     /// A log line from ani-cli stdout or stderr
     PlaybackLog(String),
@@ -29,6 +29,8 @@ enum AppMessage {
     PlaybackDone,
     /// AniList search results
     SearchResults(Vec<db::cache::Anime>),
+    /// Cover image downloaded and decoded (anime_id, image)
+    CoverReady(i64, image::DynamicImage),
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -56,31 +58,29 @@ async fn main() -> anyhow::Result<()> {
     let mut state     = AppState::new();
     let mut home_data = ui::home::HomeData::empty();
 
+    // ── Image picker (after alternate screen, before event loop) ──────────────
+    // guess_protocol() probes the terminal — must happen after EnterAlternateScreen.
+    if let Ok(mut picker) = ratatui_image::picker::Picker::from_termios() {
+        picker.guess_protocol();
+        state.picker = Some(picker);
+    }
+
     // ── Startup: kick off background sync ─────────────────────────────────────
     {
-        let pool2   = pool.clone();
-        let cfg2    = cfg.clone();
-        let tx2     = tx.clone();
+        let pool2 = pool.clone();
+        let cfg2  = cfg.clone();
+        let tx2   = tx.clone();
         tokio::spawn(async move {
             let client = api::anilist::AniListClient::new();
-            let now    = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-
+            let now    = unix_now();
             let result = services::sync::sync_all(
-                &pool2,
-                &client,
-                cfg2.cache.trending_ttl,
-                cfg2.cache.stable_ttl,
-                now,
+                &pool2, &client,
+                cfg2.cache.trending_ttl, cfg2.cache.stable_ttl, now,
             )
             .await;
-
             match result {
                 Ok(data) => { let _ = tx2.send(AppMessage::HomeData(data)).await; }
                 Err(e)   => {
-                    // On error, send empty home data so UI unblocks
                     eprintln!("Sync error: {e}");
                     let _ = tx2.send(AppMessage::HomeData(ui::home::HomeData::empty())).await;
                 }
@@ -94,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
         while let Ok(msg) = rx.try_recv() {
             match msg {
                 AppMessage::HomeData(data) => {
-                    home_data      = data;
+                    home_data        = data;
                     state.is_loading = false;
                 }
                 AppMessage::PlaybackLog(line) => {
@@ -103,7 +103,6 @@ async fn main() -> anyhow::Result<()> {
                 AppMessage::PlaybackDone => {
                     state.now_playing = None;
                     state.player_stop = None;
-                    // Auto-return to detail screen
                     if state.screen == Screen::Playback {
                         state.screen = Screen::Detail;
                     }
@@ -112,8 +111,19 @@ async fn main() -> anyhow::Result<()> {
                     state.search_results = results;
                     state.search_cursor  = 0;
                 }
+                AppMessage::CoverReady(anime_id, img) => {
+                    // Only apply if we're still on the same anime's detail screen
+                    if state.cover_anime_id == Some(anime_id) {
+                        let protocol = state.picker.as_mut().map(|p| p.new_resize_protocol(img));
+                        state.cover_state = protocol;
+                    }
+                }
             }
         }
+
+        // Resolve active toast before entering draw (avoids mutable borrow conflict)
+        let now       = unix_now();
+        let toast_msg = state.active_toast(now).map(|s| s.to_string());
 
         // Draw current screen
         terminal.draw(|frame| {
@@ -125,31 +135,29 @@ async fn main() -> anyhow::Result<()> {
                         ui::home::render(frame, &state, &home_data);
                     }
                 }
-                Screen::Detail   => ui::detail::render(frame, &state),
+                Screen::Detail   => ui::detail::render(frame, &mut state),
                 Screen::Playback => ui::playback::render(frame, &state),
                 Screen::Search   => {
-                    // Render home beneath the overlay
+                    // Home beneath the overlay
                     ui::home::render(frame, &state, &home_data);
                     ui::search::render_overlay(frame, &state);
                 }
                 Screen::Help => {
+                    // Home beneath the overlay
                     ui::home::render(frame, &state, &home_data);
+                    ui::help::render_overlay(frame);
                 }
+            }
+            // Toast notification renders on top of everything
+            if let Some(ref msg) = toast_msg {
+                ui::help::render_toast(frame, msg);
             }
         })?;
 
-        // Input: poll with short timeout so background messages are processed promptly
+        // Poll keyboard with short timeout so background messages stay responsive
         if event::poll(Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
-                handle_key(
-                    key,
-                    &mut state,
-                    &mut home_data,
-                    &pool,
-                    &cfg,
-                    &tx,
-                )
-                .await;
+                handle_key(key, &mut state, &mut home_data, &pool, &cfg, &tx).await;
             }
         }
 
@@ -180,42 +188,41 @@ async fn handle_key(
     cfg:       &config::Config,
     tx:        &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
-    // Global keys work on every screen
-    match key.code {
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.should_quit = true;
-            return;
-        }
-        _ => {}
+    // Ctrl+C works everywhere
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        state.should_quit = true;
+        return;
     }
 
     match state.screen {
-        Screen::Home     => handle_home(key, state, home_data, tx).await,
-        Screen::Detail   => handle_detail(key, state, cfg, tx).await,
-        Screen::Playback => handle_playback(key, state),
+        Screen::Home     => handle_home(key, state, home_data, pool, cfg, tx).await,
+        Screen::Detail   => handle_detail(key, state, pool, cfg, tx).await,
+        Screen::Playback => handle_playback(key, state, pool, cfg, tx).await,
         Screen::Search   => handle_search(key, state, pool, tx).await,
         Screen::Help     => { state.go_back(); }
     }
 }
 
-// ── Home screen input ─────────────────────────────────────────────────────────
+// ── Home screen ───────────────────────────────────────────────────────────────
 
 async fn handle_home(
     key:       event::KeyEvent,
     state:     &mut AppState,
     home_data: &mut ui::home::HomeData,
+    pool:      &sqlx::SqlitePool,
+    cfg:       &config::Config,
     tx:        &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
     use state::CategoryRow::*;
 
     match key.code {
-        KeyCode::Char('q') => state.should_quit = true,
-        KeyCode::Esc       => state.should_quit = true,
+        KeyCode::Char('q') | KeyCode::Esc => state.should_quit = true,
 
-        // Navigate rows
+        // Row navigation
         KeyCode::Char('j') | KeyCode::Down => {
             state.active_row = match state.active_row {
-                ContinueWatching => Trending,
+                ContinueWatching => Watchlist,
+                Watchlist        => Trending,
                 Trending         => Popular,
                 Popular          => TopRated,
                 TopRated         => Seasonal,
@@ -225,14 +232,15 @@ async fn handle_home(
         KeyCode::Char('k') | KeyCode::Up => {
             state.active_row = match state.active_row {
                 ContinueWatching => ContinueWatching,
-                Trending         => ContinueWatching,
+                Watchlist        => ContinueWatching,
+                Trending         => Watchlist,
                 Popular          => Trending,
                 TopRated         => Popular,
                 Seasonal         => TopRated,
             };
         }
 
-        // Navigate cards within row
+        // Card navigation within row
         KeyCode::Char('l') | KeyCode::Right => {
             let (key, max) = active_row_key_max(state, home_data);
             state.scroll_row_right(&key, max);
@@ -242,28 +250,53 @@ async fn handle_home(
             state.scroll_row_left(&key);
         }
 
-        // Select highlighted card → detail screen
+        // Open detail for highlighted card
         KeyCode::Enter => {
             if let Some(anime) = active_anime(state, home_data) {
+                let in_wl = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
+                state.in_watchlist = in_wl;
+                trigger_cover_download(anime.clone(), pool.clone(), tx.clone());
                 state.open_detail(anime);
             }
         }
 
-        // Search overlay
         KeyCode::Char('/') => state.open_search(),
-
-        // Help
         KeyCode::Char('?') => state.screen = Screen::Help,
+
+        // Refresh home data (re-sync respecting TTLs)
+        KeyCode::Char('r') => {
+            state.is_loading = true;
+            let pool2 = pool.clone();
+            let cfg2  = cfg.clone();
+            let tx2   = tx.clone();
+            tokio::spawn(async move {
+                let client = api::anilist::AniListClient::new();
+                let now    = unix_now();
+                let result = services::sync::sync_all(
+                    &pool2, &client,
+                    cfg2.cache.trending_ttl, cfg2.cache.stable_ttl, now,
+                )
+                .await;
+                match result {
+                    Ok(data) => { let _ = tx2.send(AppMessage::HomeData(data)).await; }
+                    Err(e)   => {
+                        eprintln!("Refresh error: {e}");
+                        let _ = tx2.send(AppMessage::HomeData(ui::home::HomeData::empty())).await;
+                    }
+                }
+            });
+        }
 
         _ => {}
     }
 }
 
-/// Returns the row key string and item count for the currently active row.
+/// Row key string + item count for the active row.
 fn active_row_key_max(state: &AppState, data: &ui::home::HomeData) -> (String, usize) {
     use state::CategoryRow::*;
     match state.active_row {
         ContinueWatching => ("continue_watching".to_string(), data.continue_watching.len()),
+        Watchlist        => ("watchlist".to_string(),         data.watchlist.len()),
         Trending         => ("trending".to_string(),          data.trending.len()),
         Popular          => ("popular".to_string(),           data.popular.len()),
         TopRated         => ("top_rated".to_string(),         data.top_rated.len()),
@@ -271,13 +304,14 @@ fn active_row_key_max(state: &AppState, data: &ui::home::HomeData) -> (String, u
     }
 }
 
-/// Returns the currently highlighted anime card.
+/// Currently highlighted anime card.
 fn active_anime(state: &AppState, data: &ui::home::HomeData) -> Option<db::cache::Anime> {
     use state::CategoryRow::*;
     let (key, _) = active_row_key_max(state, data);
     let offset   = state.row_offset(&key);
     let list     = match state.active_row {
         ContinueWatching => &data.continue_watching,
+        Watchlist        => &data.watchlist,
         Trending         => &data.trending,
         Popular          => &data.popular,
         TopRated         => &data.top_rated,
@@ -286,27 +320,26 @@ fn active_anime(state: &AppState, data: &ui::home::HomeData) -> Option<db::cache
     list.get(offset).cloned()
 }
 
-// ── Detail screen input ───────────────────────────────────────────────────────
+// ── Detail screen ─────────────────────────────────────────────────────────────
 
 async fn handle_detail(
     key:   event::KeyEvent,
     state: &mut AppState,
+    pool:  &sqlx::SqlitePool,
     cfg:   &config::Config,
     tx:    &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
     match key.code {
-        KeyCode::Esc => state.go_back(),
-        KeyCode::Char('q') => state.go_back(),
-        KeyCode::Char('/') => state.open_search(),
+        KeyCode::Esc | KeyCode::Char('q') => state.go_back(),
+        KeyCode::Char('/')                => state.open_search(),
 
-        // Navigate episodes
+        // Episode navigation
         KeyCode::Char('l') | KeyCode::Right => {
             if let Some(ep) = state.selected_episode {
-                let max = state.episode_list.last().copied().unwrap_or(1);
+                let max           = state.episode_list.last().copied().unwrap_or(1);
+                let pills_per_row = 10usize;
                 if ep < max {
                     state.selected_episode = Some(ep + 1);
-                    // Scroll episode offset to keep selection visible
-                    let pills_per_row = 10usize; // approximate
                     if ep as usize >= state.episode_offset + pills_per_row {
                         state.episode_offset += pills_per_row;
                     }
@@ -315,9 +348,9 @@ async fn handle_detail(
         }
         KeyCode::Char('h') | KeyCode::Left => {
             if let Some(ep) = state.selected_episode {
+                let pills_per_row = 10usize;
                 if ep > 1 {
                     state.selected_episode = Some(ep - 1);
-                    let pills_per_row = 10usize;
                     if (ep as usize).saturating_sub(1) < state.episode_offset {
                         state.episode_offset = state.episode_offset.saturating_sub(pills_per_row);
                     }
@@ -325,9 +358,9 @@ async fn handle_detail(
             }
         }
 
-        // Play selected episode
+        // Play
         KeyCode::Enter => {
-            if let Some(anime) = &state.selected_anime {
+            if let Some(anime) = state.selected_anime.clone() {
                 let ep    = state.selected_episode.unwrap_or(1);
                 let title = anime.display_title().to_string();
                 let opts  = api::player::PlayOptions {
@@ -336,42 +369,40 @@ async fn handle_detail(
                     quality: cfg.quality.as_str().to_string(),
                     dub:     cfg.audio_mode == config::AudioMode::Dub,
                 };
-                start_playback(state, opts, title, ep, tx).await;
+                start_playback(state, opts, title, ep, tx, pool).await;
             }
         }
 
-        // Add to watchlist
+        // Watchlist toggle
         KeyCode::Char('+') => {
-            // Handled externally — watchlist logic lives in main loop (needs pool)
+            if let Some(anime) = state.selected_anime.clone() {
+                let now = unix_now();
+                if state.in_watchlist {
+                    if db::user::remove_from_watchlist(pool, anime.id).await.is_ok() {
+                        state.in_watchlist = false;
+                        state.show_toast("Removed from watchlist", now);
+                    }
+                } else if db::user::add_to_watchlist(pool, anime.id, now).await.is_ok() {
+                    state.in_watchlist = true;
+                    state.show_toast("Added to watchlist", now);
+                }
+            }
         }
 
         _ => {}
     }
 }
 
-// ── Search overlay input ──────────────────────────────────────────────────────
+// ── Search overlay ────────────────────────────────────────────────────────────
 
 async fn handle_search(
-    key:  event::KeyEvent,
+    key:   event::KeyEvent,
     state: &mut AppState,
     pool:  &sqlx::SqlitePool,
     tx:    &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
     match key.code {
         KeyCode::Esc => state.go_back(),
-
-        KeyCode::Char(c) => {
-            state.search_query.push(c);
-            // Search SQLite cache immediately
-            let query   = state.search_query.clone();
-            let pool2   = pool.clone();
-            let tx2     = tx.clone();
-            tokio::spawn(async move {
-                if let Ok(results) = db::cache::search_cache(&pool2, &query).await {
-                    let _ = tx2.send(AppMessage::SearchResults(results)).await;
-                }
-            });
-        }
 
         KeyCode::Backspace => {
             state.search_query.pop();
@@ -389,6 +420,7 @@ async fn handle_search(
             }
         }
 
+        // Cursor movement — must come before the generic Char(c) arm
         KeyCode::Down | KeyCode::Char('j') => {
             if state.search_cursor + 1 < state.search_results.len() {
                 state.search_cursor += 1;
@@ -400,23 +432,63 @@ async fn handle_search(
 
         KeyCode::Enter => {
             if let Some(anime) = state.search_results.get(state.search_cursor).cloned() {
-                state.screen = Screen::Home; // close search
+                let in_wl = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
+                state.in_watchlist = in_wl;
+                trigger_cover_download(anime.clone(), pool.clone(), tx.clone());
+                state.screen = Screen::Home; // close search first
                 state.open_detail(anime);
             }
+        }
+
+        // Append character to search query (after all specific char patterns)
+        KeyCode::Char(c) => {
+            state.search_query.push(c);
+            let query = state.search_query.clone();
+            let pool2 = pool.clone();
+            let tx2   = tx.clone();
+            tokio::spawn(async move {
+                if let Ok(results) = db::cache::search_cache(&pool2, &query).await {
+                    let _ = tx2.send(AppMessage::SearchResults(results)).await;
+                }
+            });
         }
 
         _ => {}
     }
 }
 
-// ── Playback screen input ─────────────────────────────────────────────────────
+// ── Playback screen ───────────────────────────────────────────────────────────
 
-fn handle_playback(key: event::KeyEvent, state: &mut AppState) {
+async fn handle_playback(
+    key:   event::KeyEvent,
+    state: &mut AppState,
+    pool:  &sqlx::SqlitePool,
+    cfg:   &config::Config,
+    tx:    &tokio::sync::mpsc::Sender<AppMessage>,
+) {
     match key.code {
-        // Stop playback and return to detail
         KeyCode::Char('q') | KeyCode::Esc => {
             state.stop_player();
             state.go_back();
+        }
+        // Next episode without leaving playback
+        KeyCode::Char('n') => {
+            if let Some(anime) = state.selected_anime.clone() {
+                let ep  = state.selected_episode.unwrap_or(1);
+                let max = state.episode_list.last().copied().unwrap_or(1);
+                if ep < max {
+                    let next = ep + 1;
+                    state.selected_episode = Some(next);
+                    let title = anime.display_title().to_string();
+                    let opts  = api::player::PlayOptions {
+                        title:   title.clone(),
+                        episode: next,
+                        quality: cfg.quality.as_str().to_string(),
+                        dub:     cfg.audio_mode == config::AudioMode::Dub,
+                    };
+                    start_playback(state, opts, title, next, tx, pool).await;
+                }
+            }
         }
         _ => {}
     }
@@ -424,37 +496,41 @@ fn handle_playback(key: event::KeyEvent, state: &mut AppState) {
 
 // ─── Playback launcher ────────────────────────────────────────────────────────
 
-/// Spawn ani-cli, stream logs to channel, auto-return on exit.
+/// Spawn ani-cli, stream logs to channel, record watch history, auto-return on exit.
 async fn start_playback(
     state:   &mut AppState,
     opts:    api::player::PlayOptions,
     title:   String,
     episode: u32,
     tx:      &tokio::sync::mpsc::Sender<AppMessage>,
+    pool:    &sqlx::SqlitePool,
 ) {
-    // Stop any existing player first
     state.stop_player();
     state.playback_logs.clear();
     state.now_playing = Some(format!("{} — Episode {}", title, episode));
     state.screen      = Screen::Playback;
 
     let mut child = match api::player::spawn_async(&opts) {
-        Ok(c) => c,
-        Err(e) => {
-            state.push_log(format!("Error: {}", e));
-            return;
-        }
+        Ok(c)  => c,
+        Err(e) => { state.push_log(format!("Error: {}", e)); return; }
     };
 
-    // Take I/O handles before moving child into wait task
+    // Record watch history as soon as playback starts
+    if let Some(ref anime) = state.selected_anime {
+        let pool2    = pool.clone();
+        let anime_id = anime.id;
+        let now      = unix_now();
+        tokio::spawn(async move {
+            let _ = db::user::record_watched(&pool2, anime_id, episode as i64, now).await;
+        });
+    }
+
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
-    // oneshot channel: UI sends () to signal kill
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     state.player_stop = Some(stop_tx);
 
-    // Stream stdout
     if let Some(out) = stdout {
         let tx2 = tx.clone();
         tokio::spawn(async move {
@@ -465,7 +541,6 @@ async fn start_playback(
         });
     }
 
-    // Stream stderr
     if let Some(err) = stderr {
         let tx3 = tx.clone();
         tokio::spawn(async move {
@@ -476,19 +551,47 @@ async fn start_playback(
         });
     }
 
-    // Wait for exit OR stop signal — whichever comes first
     let tx4 = tx.clone();
     tokio::spawn(async move {
         tokio::select! {
-            _ = child.wait() => {
-                let _ = tx4.send(AppMessage::PlaybackDone).await;
-            }
-            _ = stop_rx => {
+            _ = child.wait()  => { let _ = tx4.send(AppMessage::PlaybackDone).await; }
+            _ = stop_rx       => {
                 let _ = child.kill().await;
                 let _ = tx4.send(AppMessage::PlaybackDone).await;
             }
         }
     });
+}
+
+// ─── Cover image download ─────────────────────────────────────────────────────
+
+/// Spawn a background task to fetch (or decode a cached) cover and send CoverReady.
+fn trigger_cover_download(
+    anime: db::cache::Anime,
+    pool:  sqlx::SqlitePool,
+    tx:    tokio::sync::mpsc::Sender<AppMessage>,
+) {
+    tokio::spawn(async move {
+        if let Some(img) = download_cover_image(&anime, &pool).await {
+            let _ = tx.send(AppMessage::CoverReady(anime.id, img)).await;
+        }
+    });
+}
+
+/// Decode blob from DB or fetch from URL, cache the blob on success.
+async fn download_cover_image(
+    anime: &db::cache::Anime,
+    pool:  &sqlx::SqlitePool,
+) -> Option<image::DynamicImage> {
+    if let Some(ref blob) = anime.cover_blob {
+        return image::load_from_memory(blob).ok();
+    }
+    let url   = anime.cover_url.as_ref()?;
+    let resp  = reqwest::get(url).await.ok()?;
+    let bytes = resp.bytes().await.ok()?;
+    let img   = image::load_from_memory(&bytes).ok()?;
+    let _     = db::cache::store_cover_blob(pool, anime.id, &bytes).await;
+    Some(img)
 }
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
@@ -531,4 +634,14 @@ fn render_loading(frame: &mut ratatui::Frame) {
         area,
     );
     frame.render_widget(msg, vert[1]);
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+/// Current Unix timestamp in seconds.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
