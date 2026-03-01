@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS watchlist (
     added_at        INTEGER NOT NULL
 );
 
+-- Preferred playback search query per anime (used to skip ambiguous ani-cli picks)
+CREATE TABLE IF NOT EXISTS playback_prefs (
+    anime_id        INTEGER PRIMARY KEY REFERENCES anime(id),
+    query           TEXT    NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
+
 -- ─── SYNC META ────────────────────────────────────────────────────────────────
 
 -- Tracks when each category was last fetched from AniList

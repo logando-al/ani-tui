@@ -436,7 +436,18 @@ async fn handle_detail(
         // Play
         KeyCode::Enter => {
             if let Some(anime) = state.selected_anime.clone() {
-                if anime.playback_queries().len() > 1 {
+                if let Some(saved_query) = db::user::get_playback_query(pool, anime.id).await.unwrap_or(None) {
+                    let ep    = state.selected_episode.unwrap_or(1);
+                    let title = anime.display_title().to_string();
+                    let opts  = api::player::PlayOptions {
+                        title:   saved_query,
+                        episode: ep,
+                        quality: cfg.quality.as_str().to_string(),
+                        dub:     cfg.audio_mode == config::AudioMode::Dub,
+                        player:  cfg.player.as_str().to_string(),
+                    };
+                    start_playback(state, opts, title, ep, tx, pool).await;
+                } else if anime.playback_queries().len() > 1 {
                     state.open_playback_query_picker(&anime);
                 } else {
                     let ep    = state.selected_episode.unwrap_or(1);
@@ -513,6 +524,7 @@ async fn handle_playback_query(
                     .get(state.playback_query_cursor)
                     .cloned()
                     .unwrap_or_else(|| anime.playback_query());
+                let _ = db::user::set_playback_query(pool, anime.id, &query, unix_now()).await;
                 let opts  = api::player::PlayOptions {
                     title:   query,
                     episode: ep,
@@ -559,13 +571,13 @@ async fn handle_search(
             }
         }
 
-        // Cursor movement — must come before the generic Char(c) arm
-        KeyCode::Down | KeyCode::Char('j') => {
+        // Cursor movement uses arrows so letter keys still work for typing.
+        KeyCode::Down => {
             if state.search_cursor + 1 < state.search_results.len() {
                 state.search_cursor += 1;
             }
         }
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up => {
             state.search_cursor = state.search_cursor.saturating_sub(1);
         }
 
@@ -619,8 +631,12 @@ async fn handle_playback(
                     let next = ep + 1;
                     state.selected_episode = Some(next);
                     let title = anime.display_title().to_string();
+                    let query = db::user::get_playback_query(pool, anime.id)
+                        .await
+                        .unwrap_or(None)
+                        .unwrap_or_else(|| anime.playback_query());
                     let opts  = api::player::PlayOptions {
-                        title:   anime.playback_query(),
+                        title:   query,
                         episode: next,
                         quality: cfg.quality.as_str().to_string(),
                         dub:     cfg.audio_mode == config::AudioMode::Dub,
@@ -648,7 +664,7 @@ async fn start_playback(
     state.stop_player();
     state.playback_logs.clear();
     state.now_playing = Some(format!("{} — Episode {}", title, episode));
-    state.screen      = Screen::Playback;
+    state.screen      = Screen::Detail;
 
     let mut child = match api::player::spawn_async(&opts) {
         Ok(c)  => c,
@@ -659,6 +675,8 @@ async fn start_playback(
             return;
         }
     };
+
+    state.show_toast(format!("Launching Episode {} in external player", episode), unix_now());
 
     // Record watch history as soon as playback starts
     if let Some(ref anime) = state.selected_anime {

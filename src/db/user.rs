@@ -167,6 +167,39 @@ pub async fn get_watchlist(pool: &SqlitePool) -> Result<Vec<i64>> {
     Ok(ids)
 }
 
+/// Save the preferred playback query for a show.
+pub async fn set_playback_query(
+    pool:     &SqlitePool,
+    anime_id: i64,
+    query:    &str,
+    now:      i64,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO playback_prefs (anime_id, query, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(anime_id) DO UPDATE SET
+             query = excluded.query,
+             updated_at = excluded.updated_at",
+    )
+    .bind(anime_id)
+    .bind(query)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get the preferred playback query for a show, if one has been saved before.
+pub async fn get_playback_query(pool: &SqlitePool, anime_id: i64) -> Result<Option<String>> {
+    let query = sqlx::query_scalar::<_, String>(
+        "SELECT query FROM playback_prefs WHERE anime_id = ?",
+    )
+    .bind(anime_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(query)
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -337,5 +370,24 @@ mod tests {
         let pool = setup().await;
         let eps = get_watched_episodes(&pool, 1).await.unwrap();
         assert!(eps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_set_and_get_playback_query() {
+        let pool = setup().await;
+        set_playback_query(&pool, 1, "Attack on Titan Final Season", 123).await.unwrap();
+
+        let query = get_playback_query(&pool, 1).await.unwrap();
+        assert_eq!(query.as_deref(), Some("Attack on Titan Final Season"));
+    }
+
+    #[tokio::test]
+    async fn test_set_playback_query_updates_existing() {
+        let pool = setup().await;
+        set_playback_query(&pool, 1, "Old Query", 100).await.unwrap();
+        set_playback_query(&pool, 1, "New Query", 200).await.unwrap();
+
+        let query = get_playback_query(&pool, 1).await.unwrap();
+        assert_eq!(query.as_deref(), Some("New Query"));
     }
 }

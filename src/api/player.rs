@@ -47,9 +47,6 @@ pub fn build_args(opts: &PlayOptions) -> Vec<String> {
         args.push("--dub".to_string());
     }
 
-    // No-detach: keep mpv attached so we can read its output from the TUI
-    args.push("--no-detach".to_string());
-
     // Title as final positional argument
     args.push(opts.title.clone());
 
@@ -116,6 +113,7 @@ pub fn spawn_async(opts: &PlayOptions) -> Result<Child> {
         .args(&args)
         .env("ANI_CLI_NON_INTERACTIVE", "1")
         .env("ANI_CLI_PLAYER", player)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -148,7 +146,7 @@ mod tests {
         assert!(args.contains(&"-q".to_string()));
         assert!(args.contains(&"1080p".to_string()));
         assert!(!args.contains(&"--dub".to_string()));
-        assert!(args.contains(&"--no-detach".to_string()));
+        assert!(!args.contains(&"--no-detach".to_string()));
         assert!(args.contains(&"Naruto".to_string()));
     }
 
@@ -182,11 +180,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_args_no_detach_always_present() {
+    fn test_build_args_runs_without_no_detach() {
         let args_sub = build_args(&opts("Test", 1, "720p", false));
         let args_dub = build_args(&opts("Test", 1, "720p", true));
-        assert!(args_sub.contains(&"--no-detach".to_string()));
-        assert!(args_dub.contains(&"--no-detach".to_string()));
+        assert!(!args_sub.contains(&"--no-detach".to_string()));
+        assert!(!args_dub.contains(&"--no-detach".to_string()));
     }
 
     #[test]
