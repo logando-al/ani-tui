@@ -1,6 +1,6 @@
 //! Application state — the single source of truth for the TUI.
 
-use crate::{api::player::PlayerHandle, db::cache::Anime};
+use crate::db::cache::Anime;
 
 /// Which screen is currently active.
 #[derive(Debug, Clone, PartialEq)]
@@ -41,8 +41,14 @@ pub struct AppState {
     /// Detail screen: the anime being viewed
     pub selected_anime:   Option<Anime>,
 
+    /// Detail screen: episode list (1..=N generated from anime.episodes)
+    pub episode_list:     Vec<u32>,
+
     /// Detail screen: which episode is highlighted
     pub selected_episode: Option<u32>,
+
+    /// Detail screen: episode list scroll offset
+    pub episode_offset:   usize,
 
     /// Search overlay: current input text
     pub search_query:     String,
@@ -53,11 +59,17 @@ pub struct AppState {
     /// Search overlay: which result is highlighted
     pub search_cursor:    usize,
 
-    /// Playback: running player handle
-    pub player:           Option<PlayerHandle>,
+    /// Playback: oneshot sender to stop the background player task
+    pub player_stop:      Option<tokio::sync::oneshot::Sender<()>>,
+
+    /// Playback: title + episode currently playing (for display)
+    pub now_playing:      Option<String>,
 
     /// Playback: log lines from ani-cli stdout/stderr
     pub playback_logs:    Vec<String>,
+
+    /// Whether the app is loading home data (shows spinner)
+    pub is_loading:       bool,
 
     /// Whether the app should quit on next tick
     pub should_quit:      bool,
@@ -70,14 +82,26 @@ impl AppState {
             active_row:       CategoryRow::Trending,
             row_offsets:      std::collections::HashMap::new(),
             selected_anime:   None,
+            episode_list:     Vec::new(),
             selected_episode: None,
+            episode_offset:   0,
             search_query:     String::new(),
             search_results:   Vec::new(),
             search_cursor:    0,
-            player:           None,
+            player_stop:      None,
+            now_playing:      None,
             playback_logs:    Vec::new(),
+            is_loading:       true,
             should_quit:      false,
         }
+    }
+
+    /// Stop any currently running player.
+    pub fn stop_player(&mut self) {
+        if let Some(stop_tx) = self.player_stop.take() {
+            let _ = stop_tx.send(());
+        }
+        self.now_playing = None;
     }
 
     /// Navigate back: Playback → Detail → Home
@@ -96,8 +120,11 @@ impl AppState {
 
     /// Open the detail screen for a given anime.
     pub fn open_detail(&mut self, anime: Anime) {
-        self.selected_anime   = Some(anime);
+        let total = anime.episodes.unwrap_or(0) as u32;
+        self.episode_list     = (1..=total.max(1)).collect();
         self.selected_episode = Some(1);
+        self.episode_offset   = 0;
+        self.selected_anime   = Some(anime);
         self.screen           = Screen::Detail;
     }
 

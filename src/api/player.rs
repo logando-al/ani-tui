@@ -1,8 +1,9 @@
 //! ani-cli subprocess wrapper.
-//! Spawns ani-cli in non-interactive mode for playback.
+//! Spawns ani-cli in non-interactive mode for async playback with log streaming.
 
 use crate::error::{AppError, Result};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
+use tokio::process::{Child, Command};
 
 /// Options passed to ani-cli when launching playback.
 #[derive(Debug, Clone)]
@@ -17,39 +18,8 @@ pub struct PlayOptions {
     pub dub:     bool,
 }
 
-/// A running ani-cli process.
-pub struct PlayerHandle {
-    child: Child,
-}
-
-impl PlayerHandle {
-    /// Send SIGINT to stop playback gracefully.
-    pub fn stop(&mut self) -> Result<()> {
-        self.child.kill().map_err(|e| AppError::Player(format!("Failed to stop player: {e}")))?;
-        Ok(())
-    }
-
-    /// Wait for the player to exit and return the exit code.
-    pub fn wait(&mut self) -> Result<Option<i32>> {
-        let status = self
-            .child
-            .wait()
-            .map_err(|e| AppError::Player(format!("Wait failed: {e}")))?;
-        Ok(status.code())
-    }
-
-    /// Non-blocking check: has the player exited?
-    pub fn has_exited(&mut self) -> Result<bool> {
-        match self.child.try_wait() {
-            Ok(Some(_)) => Ok(true),
-            Ok(None)    => Ok(false),
-            Err(e)      => Err(AppError::Player(format!("try_wait failed: {e}"))),
-        }
-    }
-}
-
 /// Build the ani-cli command arguments for a given play request.
-/// Separated from spawn so it can be tested without forking.
+/// Pure function — separated from spawn so it can be tested without forking.
 pub fn build_args(opts: &PlayOptions) -> Vec<String> {
     let mut args = Vec::new();
 
@@ -66,7 +36,7 @@ pub fn build_args(opts: &PlayOptions) -> Vec<String> {
         args.push("--dub".to_string());
     }
 
-    // No-detach: keep mpv attached so we can monitor it from the TUI
+    // No-detach: keep mpv attached so we can read its output from the TUI
     args.push("--no-detach".to_string());
 
     // Title as final positional argument
@@ -75,18 +45,17 @@ pub fn build_args(opts: &PlayOptions) -> Vec<String> {
     args
 }
 
-/// Spawn ani-cli with the given options. Returns a handle to the child process.
-/// stdout and stderr are piped so the TUI can display logs.
-pub fn spawn(opts: &PlayOptions) -> Result<PlayerHandle> {
+/// Spawn ani-cli asynchronously. stdout + stderr are piped for log streaming.
+/// Returns a tokio Child — caller is responsible for reading I/O and waiting.
+pub fn spawn_async(opts: &PlayOptions) -> Result<Child> {
     let args = build_args(opts);
-    let child = Command::new("ani-cli")
+    Command::new("ani-cli")
         .args(&args)
         .env("ANI_CLI_NON_INTERACTIVE", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| AppError::Player(format!("Failed to spawn ani-cli: {e}")))?;
-    Ok(PlayerHandle { child })
+        .map_err(|e| AppError::Player(format!("Failed to spawn ani-cli: {e}")))
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
