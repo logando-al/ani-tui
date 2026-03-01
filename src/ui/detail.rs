@@ -27,7 +27,9 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         Span::styled("+", Style::default().fg(Color::Rgb(180, 0, 255))),
         Span::raw(" Watchlist  "),
         Span::styled("/", Style::default().fg(Color::Rgb(180, 0, 255))),
-        Span::raw(" Search"),
+        Span::raw(" Search  "),
+        Span::styled("?", Style::default().fg(Color::Rgb(180, 0, 255))),
+        Span::raw(" Help"),
     ]))
     .style(Style::default().bg(Color::Rgb(10, 10, 16)));
 

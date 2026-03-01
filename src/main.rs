@@ -31,6 +31,8 @@ enum AppMessage {
     SearchResults(Vec<db::cache::Anime>),
     /// Cover image downloaded and decoded (anime_id, image)
     CoverReady(i64, image::DynamicImage),
+    /// Cover image could not be downloaded or decoded (anime_id)
+    CoverFailed(i64),
     /// Watchlist changed — send fresh list to update home row immediately
     WatchlistUpdated(Vec<db::cache::Anime>),
 }
@@ -118,6 +120,12 @@ async fn main() -> anyhow::Result<()> {
                     if state.cover_anime_id == Some(anime_id) {
                         let protocol = state.picker.as_mut().map(|p| p.new_resize_protocol(img));
                         state.cover_state = protocol;
+                    }
+                }
+                AppMessage::CoverFailed(anime_id) => {
+                    // Notify the user only if we're still viewing that anime
+                    if state.cover_anime_id == Some(anime_id) && state.screen == Screen::Detail {
+                        state.show_toast("Cover image unavailable", unix_now());
                     }
                 }
                 AppMessage::WatchlistUpdated(list) => {
@@ -218,31 +226,16 @@ async fn handle_home(
     cfg:       &config::Config,
     tx:        &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
-    use state::CategoryRow::*;
-
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => state.should_quit = true,
 
-        // Row navigation
+        // Row navigation — skip rows with no content so the cursor never
+        // lands on an invisible row where Enter would do nothing.
         KeyCode::Char('j') | KeyCode::Down => {
-            state.active_row = match state.active_row {
-                ContinueWatching => Watchlist,
-                Watchlist        => Trending,
-                Trending         => Popular,
-                Popular          => TopRated,
-                TopRated         => Seasonal,
-                Seasonal         => Seasonal,
-            };
+            state.active_row = next_non_empty_row(&state.active_row, home_data, 1);
         }
         KeyCode::Char('k') | KeyCode::Up => {
-            state.active_row = match state.active_row {
-                ContinueWatching => ContinueWatching,
-                Watchlist        => ContinueWatching,
-                Trending         => Watchlist,
-                Popular          => Trending,
-                TopRated         => Popular,
-                Seasonal         => TopRated,
-            };
+            state.active_row = next_non_empty_row(&state.active_row, home_data, -1);
         }
 
         // Card navigation within row
@@ -328,6 +321,43 @@ fn active_anime(state: &AppState, data: &ui::home::HomeData) -> Option<db::cache
     list.get(offset).cloned()
 }
 
+/// Item count for a given category row.
+fn row_len(row: &state::CategoryRow, data: &ui::home::HomeData) -> usize {
+    use state::CategoryRow::*;
+    match row {
+        ContinueWatching => data.continue_watching.len(),
+        Watchlist        => data.watchlist.len(),
+        Trending         => data.trending.len(),
+        Popular          => data.popular.len(),
+        TopRated         => data.top_rated.len(),
+        Seasonal         => data.seasonal.len(),
+    }
+}
+
+/// Walk the row order in `direction` (+1 = down, -1 = up) and return the first
+/// row that has at least one item.  Returns `current` unchanged if no such row
+/// exists in that direction (i.e., already at boundary or all rows are empty).
+fn next_non_empty_row(
+    current:   &state::CategoryRow,
+    data:      &ui::home::HomeData,
+    direction: i32,
+) -> state::CategoryRow {
+    use state::CategoryRow::*;
+    let order: &[state::CategoryRow] = &[
+        ContinueWatching, Watchlist, Trending, Popular, TopRated, Seasonal,
+    ];
+    let pos = order.iter().position(|r| r == current).unwrap_or(2) as i32;
+    let mut i = pos + direction;
+    while i >= 0 && i < order.len() as i32 {
+        let candidate = &order[i as usize];
+        if row_len(candidate, data) > 0 {
+            return candidate.clone();
+        }
+        i += direction;
+    }
+    current.clone()
+}
+
 // ── Detail screen ─────────────────────────────────────────────────────────────
 
 async fn handle_detail(
@@ -340,6 +370,7 @@ async fn handle_detail(
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => state.go_back(),
         KeyCode::Char('/')                => state.open_search(),
+        KeyCode::Char('?')               => state.screen = Screen::Help,
 
         // Episode navigation
         KeyCode::Char('l') | KeyCode::Right => {
@@ -422,12 +453,19 @@ async fn handle_search(
     tx:    &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
     match key.code {
-        KeyCode::Esc => state.go_back(),
+        KeyCode::Esc => {
+            // Clear stale search state so it doesn't bleed through on next open
+            state.search_query.clear();
+            state.search_results.clear();
+            state.search_cursor = 0;
+            state.go_back();
+        }
 
         KeyCode::Backspace => {
             state.search_query.pop();
             if state.search_query.is_empty() {
                 state.search_results.clear();
+                state.search_cursor = 0;
             } else {
                 let query = state.search_query.clone();
                 let pool2 = pool.clone();
@@ -530,7 +568,12 @@ async fn start_playback(
 
     let mut child = match api::player::spawn_async(&opts) {
         Ok(c)  => c,
-        Err(e) => { state.push_log(format!("Error: {}", e)); return; }
+        Err(e) => {
+            // Return to Detail so the user isn't stranded on an empty Playback screen
+            state.screen = Screen::Detail;
+            state.show_toast(format!("Playback failed: {e}"), unix_now());
+            return;
+        }
     };
 
     // Record watch history as soon as playback starts
@@ -590,8 +633,9 @@ fn trigger_cover_download(
     tx:    tokio::sync::mpsc::Sender<AppMessage>,
 ) {
     tokio::spawn(async move {
-        if let Some(img) = download_cover_image(&anime, &pool).await {
-            let _ = tx.send(AppMessage::CoverReady(anime.id, img)).await;
+        match download_cover_image(&anime, &pool).await {
+            Some(img) => { let _ = tx.send(AppMessage::CoverReady(anime.id, img)).await; }
+            None      => { let _ = tx.send(AppMessage::CoverFailed(anime.id)).await; }
         }
     });
 }
