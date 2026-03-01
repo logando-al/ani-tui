@@ -134,7 +134,9 @@ fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData)
 
     // Each row = 1 (label) + CARD_HEIGHT (cards) + 1 (gap)
     let row_height  = 1 + CARD_HEIGHT + 1;
-    let constraints: Vec<Constraint> = (0..row_count)
+    let max_rows_that_fit = (area.height / row_height).max(1);
+    let visible_rows      = row_count.min(max_rows_that_fit);
+    let constraints: Vec<Constraint> = (0..visible_rows)
         .map(|_| Constraint::Length(row_height))
         .collect();
 
@@ -153,7 +155,7 @@ fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData)
         CategoryRow::Seasonal         => "seasonal",
     };
 
-    for (i, (label, key, items)) in visible.iter().enumerate() {
+    for (i, (label, key, items)) in visible.iter().take(visible_rows as usize).enumerate() {
         if i < row_areas.len() {
             render_row(frame, row_areas[i], state, label, key, items, *key == active_key);
         }

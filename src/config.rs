@@ -55,6 +55,7 @@ pub enum Player {
 }
 
 impl Player {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn as_str(&self) -> &str {
         match self {
             Player::Mpv => "mpv",
@@ -136,6 +137,7 @@ impl Config {
     }
 
     /// Persist config to disk, creating the directory if needed.
+    #[allow(dead_code)]
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
         if let Some(parent) = path.parent() {
@@ -154,15 +156,6 @@ impl Config {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-
-    fn config_in_tempdir(tmp: &TempDir) -> Config {
-        // Redirect config path to temp dir by writing manually
-        let path = tmp.path().join("config.toml");
-        let cfg = Config::default();
-        let content = toml::to_string_pretty(&cfg).unwrap();
-        std::fs::write(&path, content).unwrap();
-        cfg
-    }
 
     #[test]
     fn test_default_config_values() {

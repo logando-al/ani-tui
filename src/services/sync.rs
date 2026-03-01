@@ -259,7 +259,7 @@ mod tests {
 
     // ── load_continue_watching ────────────────────────────────────────────────
 
-    fn make_anime(pool_ref: &sqlx::SqlitePool, id: i64) -> cache::Anime {
+    fn make_anime(_pool_ref: &sqlx::SqlitePool, id: i64) -> cache::Anime {
         cache::Anime {
             id,
             title_english: Some(format!("Anime {}", id)),

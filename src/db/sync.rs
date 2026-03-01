@@ -10,6 +10,7 @@ pub const POPULAR:   &str = "popular";
 pub const TOP_RATED: &str = "top_rated";
 pub const SEASONAL:  &str = "seasonal";
 
+#[allow(dead_code)]
 pub const ALL_CATEGORIES: &[&str] = &[TRENDING, POPULAR, TOP_RATED, SEASONAL];
 
 /// Record that a category was just synced.

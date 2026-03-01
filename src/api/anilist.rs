@@ -51,13 +51,14 @@ struct PagePayload {
 
 #[derive(Debug, Deserialize)]
 struct SearchResponse {
-    data: SearchData,
+    #[serde(rename = "data")]
+    _data: SearchData,
 }
 
 #[derive(Debug, Deserialize)]
 struct SearchData {
     #[serde(rename = "Page")]
-    page: PagePayload,
+    _page: PagePayload,
 }
 
 /// Raw anime as returned by AniList — mapped to our `Anime` model.

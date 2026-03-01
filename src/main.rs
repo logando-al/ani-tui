@@ -14,7 +14,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use state::{AppState, Screen};
-use std::{io, time::Duration};
+use std::{env, io, time::Duration};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 // ─── Message channel ──────────────────────────────────────────────────────────
@@ -35,6 +35,14 @@ enum AppMessage {
     CoverFailed(i64),
     /// Watchlist changed — send fresh list to update home row immediately
     WatchlistUpdated(Vec<db::cache::Anime>),
+}
+
+/// Ghostty can advertise image capabilities but still be unstable with ratatui-image's runtime
+/// protocol probing/render path. Prefer the safe halfblock fallback there.
+fn should_enable_image_picker() -> bool {
+    let term = env::var("TERM").unwrap_or_default();
+    let term_program = env::var("TERM_PROGRAM").unwrap_or_default();
+    !term.contains("ghostty") && !term_program.eq_ignore_ascii_case("ghostty")
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -64,9 +72,11 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Image picker (after alternate screen, before event loop) ──────────────
     // guess_protocol() probes the terminal — must happen after EnterAlternateScreen.
-    if let Ok(mut picker) = ratatui_image::picker::Picker::from_termios() {
-        picker.guess_protocol();
-        state.picker = Some(picker);
+    if should_enable_image_picker() {
+        if let Ok(mut picker) = ratatui_image::picker::Picker::from_termios() {
+            picker.guess_protocol();
+            state.picker = Some(picker);
+        }
     }
 
     // ── Startup: kick off background sync ─────────────────────────────────────
@@ -670,9 +680,9 @@ fn render_loading(frame: &mut ratatui::Frame) {
     let vert = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(45),
+            Constraint::Min(0),
             Constraint::Length(3),
-            Constraint::Percentage(55),
+            Constraint::Min(0),
         ])
         .split(area);
 

@@ -7,7 +7,6 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
-    text::{Line, Span},
     widgets::Widget,
 };
 

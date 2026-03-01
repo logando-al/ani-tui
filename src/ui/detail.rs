@@ -113,7 +113,7 @@ fn render_metadata(frame: &mut Frame, area: Rect, anime: &Anime) {
 }
 
 /// Episode list section — horizontal scrolling pills.
-fn render_episodes(frame: &mut Frame, area: Rect, state: &AppState, anime: &Anime) {
+fn render_episodes(frame: &mut Frame, area: Rect, state: &AppState, _anime: &Anime) {
     let block = Block::default()
         .title(Span::styled(
             " Episodes ",

@@ -6,8 +6,11 @@ use sqlx::SqlitePool;
 /// A single history entry: which episode of which show was watched.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct HistoryEntry {
+    #[allow(dead_code)]
     pub anime_id:   i64,
+    #[allow(dead_code)]
     pub episode:    i64,
+    #[allow(dead_code)]
     pub watched_at: i64, // unix timestamp
 }
 
@@ -15,7 +18,9 @@ pub struct HistoryEntry {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ContinueEntry {
     pub anime_id:     i64,
+    #[allow(dead_code)]
     pub last_episode: i64,
+    #[allow(dead_code)]
     pub last_watched: i64,
 }
 
@@ -57,6 +62,7 @@ pub async fn record_watched(
 }
 
 /// Fetch full history for a show, ordered by episode ascending.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn get_history(pool: &SqlitePool, anime_id: i64) -> Result<Vec<HistoryEntry>> {
     let rows = sqlx::query_as::<_, HistoryEntry>(
         "SELECT anime_id, episode, watched_at FROM history
@@ -69,6 +75,7 @@ pub async fn get_history(pool: &SqlitePool, anime_id: i64) -> Result<Vec<History
 }
 
 /// Check whether a specific episode has been watched.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn is_watched(pool: &SqlitePool, anime_id: i64, episode: i64) -> Result<bool> {
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM history WHERE anime_id = ? AND episode = ?")
@@ -93,6 +100,7 @@ pub async fn get_continue_watching(pool: &SqlitePool) -> Result<Vec<ContinueEntr
 }
 
 /// Fetch the continue entry for a single show (if any).
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn get_continue_entry(
     pool:     &SqlitePool,
     anime_id: i64,

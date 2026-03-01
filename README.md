@@ -29,10 +29,39 @@ A Netflix-style terminal UI for anime, powered by [ani-cli](https://github.com/p
 - **Offline-capable** — SQLite cache with TTL-based staleness; home screen loads from cache with no network needed
 - **Help overlay** (`?`) available on Home and Detail screens
 
+## Prerequisites
+
+Before running `ani-tui`, make sure these runtime dependencies are installed:
+
+- [ani-cli](https://github.com/pystardust/ani-cli) must be installed and available on `$PATH`
+- A supported video player must be installed
+  - `mpv` is the default player
+  - `vlc` can also be used if you change `player` in the config
+- A terminal with truecolor support is recommended
+  - Ghostty works, but `ani-tui` currently falls back to halfblock cover rendering there for stability
+  - Any other truecolor terminal should also work with the halfblock fallback
+
+### Verify Prerequisites
+
+Run these commands before launching the app:
+
+```bash
+which ani-cli
+which mpv
+```
+
+If you plan to use VLC instead of mpv:
+
+```bash
+which vlc
+```
+
+If any command prints `not found`, install that dependency first and make sure it is on your shell `$PATH`.
+
 ## Requirements
 
-- [ani-cli](https://github.com/pystardust/ani-cli) installed and on `$PATH`
-- A terminal (Ghostty recommended for Kitty image protocol; any truecolor terminal works with halfblock art)
+- Rust toolchain (`cargo`) for building from source
+- The runtime prerequisites above
 
 ## Installation
 
@@ -49,6 +78,8 @@ cp target/release/ani-tui ~/.local/bin/
 ```bash
 ani-tui
 ```
+
+If playback does not start, the most common cause is a missing `ani-cli` or missing player binary.
 
 ### Keybindings
 
