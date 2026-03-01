@@ -139,6 +139,17 @@ pub async fn is_in_watchlist(pool: &SqlitePool, anime_id: i64) -> Result<bool> {
     Ok(count > 0)
 }
 
+/// Get all distinct episode numbers watched for a specific anime, ordered ascending.
+pub async fn get_watched_episodes(pool: &SqlitePool, anime_id: i64) -> Result<Vec<i64>> {
+    let rows = sqlx::query_scalar::<_, i64>(
+        "SELECT DISTINCT episode FROM history WHERE anime_id = ? ORDER BY episode ASC",
+    )
+    .bind(anime_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 /// Fetch all watchlist anime IDs, ordered by date added.
 pub async fn get_watchlist(pool: &SqlitePool) -> Result<Vec<i64>> {
     let ids: Vec<i64> =
@@ -297,5 +308,26 @@ mod tests {
     async fn test_not_in_watchlist_by_default() {
         let pool = setup().await;
         assert!(!is_in_watchlist(&pool, 1).await.unwrap());
+    }
+
+    // ── Watched episodes ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_watched_episodes_returns_distinct_episodes() {
+        let pool = setup().await;
+        record_watched(&pool, 1, 3, 1_000).await.unwrap();
+        record_watched(&pool, 1, 5, 2_000).await.unwrap();
+        record_watched(&pool, 1, 3, 3_000).await.unwrap(); // re-watch ep3 — still only 1 entry
+        let eps = get_watched_episodes(&pool, 1).await.unwrap();
+        assert_eq!(eps.len(), 2);
+        assert!(eps.contains(&3));
+        assert!(eps.contains(&5));
+    }
+
+    #[tokio::test]
+    async fn test_get_watched_episodes_empty_for_unwatched() {
+        let pool = setup().await;
+        let eps = get_watched_episodes(&pool, 1).await.unwrap();
+        assert!(eps.is_empty());
     }
 }

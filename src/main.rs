@@ -31,6 +31,8 @@ enum AppMessage {
     SearchResults(Vec<db::cache::Anime>),
     /// Cover image downloaded and decoded (anime_id, image)
     CoverReady(i64, image::DynamicImage),
+    /// Watchlist changed — send fresh list to update home row immediately
+    WatchlistUpdated(Vec<db::cache::Anime>),
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -117,6 +119,9 @@ async fn main() -> anyhow::Result<()> {
                         let protocol = state.picker.as_mut().map(|p| p.new_resize_protocol(img));
                         state.cover_state = protocol;
                     }
+                }
+                AppMessage::WatchlistUpdated(list) => {
+                    home_data.watchlist = list;
                 }
             }
         }
@@ -253,10 +258,13 @@ async fn handle_home(
         // Open detail for highlighted card
         KeyCode::Enter => {
             if let Some(anime) = active_anime(state, home_data) {
-                let in_wl = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
+                let in_wl  = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
+                let w_eps  = db::user::get_watched_episodes(pool, anime.id).await.unwrap_or_default();
                 state.in_watchlist = in_wl;
                 trigger_cover_download(anime.clone(), pool.clone(), tx.clone());
                 state.open_detail(anime);
+                // Set after open_detail (which clears watched_episodes)
+                state.watched_episodes = w_eps.into_iter().map(|e| e as u32).collect();
             }
         }
 
@@ -373,7 +381,7 @@ async fn handle_detail(
             }
         }
 
-        // Watchlist toggle
+        // Watchlist toggle — updates home row immediately via WatchlistUpdated
         KeyCode::Char('+') => {
             if let Some(anime) = state.selected_anime.clone() {
                 let now = unix_now();
@@ -381,10 +389,22 @@ async fn handle_detail(
                     if db::user::remove_from_watchlist(pool, anime.id).await.is_ok() {
                         state.in_watchlist = false;
                         state.show_toast("Removed from watchlist", now);
+                        let pool2 = pool.clone();
+                        let tx2   = tx.clone();
+                        tokio::spawn(async move {
+                            let wl = services::sync::load_watchlist(&pool2).await.unwrap_or_default();
+                            let _ = tx2.send(AppMessage::WatchlistUpdated(wl)).await;
+                        });
                     }
                 } else if db::user::add_to_watchlist(pool, anime.id, now).await.is_ok() {
                     state.in_watchlist = true;
                     state.show_toast("Added to watchlist", now);
+                    let pool2 = pool.clone();
+                    let tx2   = tx.clone();
+                    tokio::spawn(async move {
+                        let wl = services::sync::load_watchlist(&pool2).await.unwrap_or_default();
+                        let _ = tx2.send(AppMessage::WatchlistUpdated(wl)).await;
+                    });
                 }
             }
         }
@@ -413,9 +433,7 @@ async fn handle_search(
                 let pool2 = pool.clone();
                 let tx2   = tx.clone();
                 tokio::spawn(async move {
-                    if let Ok(results) = db::cache::search_cache(&pool2, &query).await {
-                        let _ = tx2.send(AppMessage::SearchResults(results)).await;
-                    }
+                    search_and_send(&pool2, &query, &tx2).await;
                 });
             }
         }
@@ -433,10 +451,12 @@ async fn handle_search(
         KeyCode::Enter => {
             if let Some(anime) = state.search_results.get(state.search_cursor).cloned() {
                 let in_wl = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
+                let w_eps = db::user::get_watched_episodes(pool, anime.id).await.unwrap_or_default();
                 state.in_watchlist = in_wl;
                 trigger_cover_download(anime.clone(), pool.clone(), tx.clone());
                 state.screen = Screen::Home; // close search first
                 state.open_detail(anime);
+                state.watched_episodes = w_eps.into_iter().map(|e| e as u32).collect();
             }
         }
 
@@ -447,9 +467,7 @@ async fn handle_search(
             let pool2 = pool.clone();
             let tx2   = tx.clone();
             tokio::spawn(async move {
-                if let Ok(results) = db::cache::search_cache(&pool2, &query).await {
-                    let _ = tx2.send(AppMessage::SearchResults(results)).await;
-                }
+                search_and_send(&pool2, &query, &tx2).await;
             });
         }
 
@@ -634,6 +652,38 @@ fn render_loading(frame: &mut ratatui::Frame) {
         area,
     );
     frame.render_widget(msg, vert[1]);
+}
+
+// ─── Search helper ────────────────────────────────────────────────────────────
+
+/// Search SQLite cache first (fast), then fall back to AniList network for queries
+/// with ≥ 3 characters if local results are sparse. Sends SearchResults messages.
+async fn search_and_send(
+    pool:  &sqlx::SqlitePool,
+    query: &str,
+    tx:    &tokio::sync::mpsc::Sender<AppMessage>,
+) {
+    // Local search — always runs first for instant results
+    if let Ok(results) = db::cache::search_cache(pool, query).await {
+        let _ = tx.send(AppMessage::SearchResults(results)).await;
+    }
+
+    // Network fallback: only when query is long enough and worth the round trip
+    if query.len() < 3 {
+        return;
+    }
+    let client = api::anilist::AniListClient::new();
+    let now    = unix_now();
+    if let Ok(net_results) = client.search(query, now).await {
+        // Cache the network results so future local searches benefit
+        for anime in &net_results {
+            let _ = db::cache::upsert_anime(pool, anime).await;
+        }
+        // Re-run local search to merge with freshly cached network results
+        if let Ok(merged) = db::cache::search_cache(pool, query).await {
+            let _ = tx.send(AppMessage::SearchResults(merged)).await;
+        }
+    }
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

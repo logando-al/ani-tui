@@ -11,7 +11,7 @@ use ratatui::{
 
 use crate::{
     db::cache::Anime,
-    state::AppState,
+    state::{AppState, CategoryRow},
     ui::components::cover::HalfblockCover,
 };
 
@@ -143,37 +143,55 @@ fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData)
         .constraints(constraints)
         .split(area);
 
+    // Determine which row key is currently active for highlight
+    let active_key = match state.active_row {
+        CategoryRow::ContinueWatching => "continue_watching",
+        CategoryRow::Watchlist        => "watchlist",
+        CategoryRow::Trending         => "trending",
+        CategoryRow::Popular          => "popular",
+        CategoryRow::TopRated         => "top_rated",
+        CategoryRow::Seasonal         => "seasonal",
+    };
+
     for (i, (label, key, items)) in visible.iter().enumerate() {
         if i < row_areas.len() {
-            render_row(frame, row_areas[i], state, label, key, items);
+            render_row(frame, row_areas[i], state, label, key, items, *key == active_key);
         }
     }
 }
 
 /// Render a single horizontal category row with a label and cards.
 fn render_row(
-    frame:  &mut Frame,
-    area:   Rect,
-    state:  &AppState,
-    label:  &str,
-    key:    &str,
-    items:  &[Anime],
+    frame:     &mut Frame,
+    area:      Rect,
+    state:     &AppState,
+    label:     &str,
+    key:       &str,
+    items:     &[Anime],
+    is_active: bool,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(area);
 
-    // Row label
+    // Row label — purple when active, dim white otherwise
+    let label_style = if is_active {
+        Style::default()
+            .fg(Color::Rgb(180, 0, 255))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::Rgb(160, 160, 160))
+            .add_modifier(Modifier::BOLD)
+    };
     let label_widget = Paragraph::new(Line::from(Span::styled(
         format!(" {}", label),
-        Style::default()
-            .fg(Color::Rgb(220, 220, 220))
-            .add_modifier(Modifier::BOLD),
+        label_style,
     )));
     frame.render_widget(label_widget, chunks[0]);
 
-    // Cards
+    // Cards — the first visible card is the selected one when this row is active
     let card_area   = chunks[1];
     let offset      = state.row_offset(key);
     let visible_n   = (card_area.width / (CARD_WIDTH + CARD_GAP)).max(1) as usize;
@@ -188,16 +206,29 @@ fn render_row(
             height: CARD_HEIGHT,
         };
         if rect.x + rect.width <= card_area.x + card_area.width {
-            render_card(frame, rect, anime);
+            render_card(frame, rect, anime, is_active && i == 0);
         }
     }
 }
 
 /// Render a single anime card (cover + title + score).
-fn render_card(frame: &mut Frame, area: Rect, anime: &Anime) {
+/// `selected` draws a purple border around the card to indicate it's the active selection.
+fn render_card(frame: &mut Frame, area: Rect, anime: &Anime, selected: bool) {
     if area.height < 3 {
         return;
     }
+
+    // When selected, draw a purple border and shrink the content area inward
+    let content_area = if selected {
+        let border = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(180, 0, 255)));
+        let inner = border.inner(area);
+        frame.render_widget(border, area);
+        inner
+    } else {
+        area
+    };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -206,7 +237,7 @@ fn render_card(frame: &mut Frame, area: Rect, anime: &Anime) {
             Constraint::Length(1), // title
             Constraint::Length(1), // score + format
         ])
-        .split(area);
+        .split(content_area);
 
     // Cover (halfblock — real image layer added later)
     frame.render_widget(

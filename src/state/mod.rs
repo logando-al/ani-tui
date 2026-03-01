@@ -2,6 +2,7 @@
 
 use crate::db::cache::Anime;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
+use std::collections::HashSet;
 
 /// Which screen is currently active.
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +91,9 @@ pub struct AppState {
 
     /// Whether the app should quit on next tick
     pub should_quit:      bool,
+
+    /// Detail screen: set of watched episode numbers for the current anime
+    pub watched_episodes: HashSet<u32>,
 }
 
 impl AppState {
@@ -115,6 +119,7 @@ impl AppState {
             toast:            None,
             is_loading:       true,
             should_quit:      false,
+            watched_episodes: HashSet::new(),
         }
     }
 
@@ -174,7 +179,8 @@ impl AppState {
         self.selected_episode = Some(1);
         self.episode_offset   = 0;
         self.cover_anime_id   = Some(anime.id);
-        self.cover_state      = None; // reset so stale image isn't shown
+        self.cover_state      = None;            // reset so stale image isn't shown
+        self.watched_episodes = HashSet::new();  // will be populated by the caller
         self.selected_anime   = Some(anime);
         self.screen           = Screen::Detail;
     }

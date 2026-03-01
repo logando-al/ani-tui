@@ -155,12 +155,19 @@ fn render_episodes(frame: &mut Frame, area: Rect, state: &AppState, anime: &Anim
                 break;
             }
             let is_selected = ep == selected_ep;
+            let is_watched  = state.watched_episodes.contains(&ep);
             let label       = format!(" E{:<3}", ep);
             let style       = if is_selected {
+                // Purple highlight for the active cursor position
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::Rgb(180, 0, 255))
                     .add_modifier(Modifier::BOLD)
+            } else if is_watched {
+                // Dimmed to show the episode is already watched
+                Style::default()
+                    .fg(Color::Rgb(90, 90, 110))
+                    .bg(Color::Rgb(18, 18, 28))
             } else {
                 Style::default()
                     .fg(Color::Rgb(180, 180, 180))
