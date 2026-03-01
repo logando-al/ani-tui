@@ -2,7 +2,7 @@
 //! Renders: Featured banner + Continue Watching + Trending + Popular + Top Rated + Seasonal.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -23,7 +23,7 @@ const CARD_HEIGHT: u16 = 10;
 const CARD_GAP: u16    = 1;
 
 /// Render the full home screen.
-pub fn render(frame: &mut Frame, state: &AppState, categories: &HomeData) {
+pub fn render(frame: &mut Frame, state: &mut AppState, categories: &HomeData) {
     let area = frame.area();
     let banner_anime = active_banner_anime(state, categories).or(categories.featured.as_ref());
 
@@ -36,12 +36,12 @@ pub fn render(frame: &mut Frame, state: &AppState, categories: &HomeData) {
         ])
         .split(area);
 
-    render_featured(frame, chunks[0], banner_anime, categories);
+    render_featured(frame, chunks[0], state, banner_anime, categories);
     render_rows(frame, chunks[2], state, categories);
 }
 
 /// Featured banner at the top — highlights the first trending anime.
-fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>, data: &HomeData) {
+fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: Option<&Anime>, data: &HomeData) {
     let Some(anime) = anime else {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -49,6 +49,22 @@ fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>, data: &
         frame.render_widget(block, area);
         return;
     };
+
+    let banner = Block::default()
+        .borders(Borders::LEFT)
+        .border_style(Style::default().fg(Color::Rgb(180, 0, 255)))
+        .style(Style::default().bg(Color::Rgb(12, 12, 18)));
+    let inner = banner.inner(area);
+    frame.render_widget(banner, area);
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(20),
+            Constraint::Length(2),
+            Constraint::Min(0),
+        ])
+        .split(inner);
 
     let title   = anime.display_title();
     let genres  = anime.genre_list().join(" · ");
@@ -73,6 +89,38 @@ fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>, data: &
         .chars()
         .take(120)
         .collect::<String>();
+
+    let cover_frame = if cols[0].width > 4 {
+        cols[0].inner(Margin { horizontal: 1, vertical: 0 })
+    } else {
+        cols[0]
+    };
+    let cover_bg = Block::default().style(Style::default().bg(Color::Rgb(14, 14, 22)));
+    frame.render_widget(cover_bg, cover_frame);
+    let cover_inner = if cover_frame.width > 2 && cover_frame.height > 2 {
+        cover_frame.inner(Margin { horizontal: 1, vertical: 1 })
+    } else {
+        cover_frame
+    };
+
+    if state.has_image_support() && state.cover_state.is_some() && state.cover_anime_id == Some(anime.id) {
+        if let Some(ref mut cover) = state.cover_state {
+            let image_widget = ratatui_image::StatefulImage::new(None)
+                .resize(ratatui_image::Resize::Fit(None));
+            frame.render_stateful_widget(image_widget, cover_inner, cover);
+        }
+    } else {
+        frame.render_widget(
+            HalfblockCover { anime_id: anime.id, title: anime.display_title() },
+            cover_inner,
+        );
+    }
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(60, 60, 80))),
+        cover_frame,
+    );
 
     let content = vec![
         Line::from(Span::styled(
@@ -110,14 +158,9 @@ fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>, data: &
     ];
 
     let block = Paragraph::new(content)
-        .block(
-            Block::default()
-                .borders(Borders::LEFT)
-                .border_style(Style::default().fg(Color::Rgb(180, 0, 255)))
-                .style(Style::default().bg(Color::Rgb(12, 12, 18))),
-        )
-        .style(Style::default().bg(Color::Rgb(12, 12, 18)));
-    frame.render_widget(block, area);
+        .style(Style::default().bg(Color::Rgb(12, 12, 18)))
+        .wrap(ratatui::widgets::Wrap { trim: true });
+    frame.render_widget(block, cols[2]);
 }
 
 fn active_banner_anime<'a>(state: &AppState, data: &'a HomeData) -> Option<&'a Anime> {

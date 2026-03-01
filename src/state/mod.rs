@@ -186,11 +186,14 @@ impl AppState {
     /// Open the detail screen for a given anime.
     pub fn open_detail(&mut self, anime: Anime) {
         let total = anime.episodes.unwrap_or(0) as u32;
+        let reuse_cover = self.cover_anime_id == Some(anime.id) && self.cover_state.is_some();
         self.episode_list     = (1..=total.max(1)).collect();
         self.selected_episode = Some(1);
         self.episode_offset   = 0;
         self.cover_anime_id   = Some(anime.id);
-        self.cover_state      = None;            // reset so stale image isn't shown
+        if !reuse_cover {
+            self.cover_state  = None;            // reset so stale image isn't shown
+        }
         self.watched_episodes = HashSet::new();  // will be populated by the caller
         self.selected_anime   = Some(anime);
         self.screen           = Screen::Detail;

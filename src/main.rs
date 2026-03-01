@@ -100,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
                 AppMessage::HomeData(data) => {
                     home_data        = data;
                     state.is_loading = false;
+                    refresh_home_cover(&mut state, &home_data, &pool, &tx);
                 }
                 AppMessage::PlaybackLog(line) => {
                     state.push_log(line);
@@ -133,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
                     let max_idx = home_data.watchlist.len().saturating_sub(1);
                     let offset  = state.row_offset("watchlist").min(max_idx);
                     state.row_offsets.insert("watchlist".to_string(), offset);
+                    refresh_home_cover(&mut state, &home_data, &pool, &tx);
                 }
             }
         }
@@ -148,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
                     if state.is_loading {
                         render_loading(frame);
                     } else {
-                        ui::home::render(frame, &state, &home_data);
+                        ui::home::render(frame, &mut state, &home_data);
                     }
                 }
                 Screen::Detail   => ui::detail::render(frame, &mut state),
@@ -159,12 +161,12 @@ async fn main() -> anyhow::Result<()> {
                 Screen::Playback => ui::playback::render(frame, &state),
                 Screen::Search   => {
                     // Home beneath the overlay
-                    ui::home::render(frame, &state, &home_data);
+                    ui::home::render(frame, &mut state, &home_data);
                     ui::search::render_overlay(frame, &state);
                 }
                 Screen::Help => {
                     // Home beneath the overlay
-                    ui::home::render(frame, &state, &home_data);
+                    ui::home::render(frame, &mut state, &home_data);
                     ui::help::render_overlay(frame);
                 }
             }
@@ -241,19 +243,23 @@ async fn handle_home(
         // lands on an invisible row where Enter would do nothing.
         KeyCode::Char('j') | KeyCode::Down => {
             state.active_row = next_non_empty_row(&state.active_row, home_data, 1);
+            refresh_home_cover(state, home_data, pool, tx);
         }
         KeyCode::Char('k') | KeyCode::Up => {
             state.active_row = next_non_empty_row(&state.active_row, home_data, -1);
+            refresh_home_cover(state, home_data, pool, tx);
         }
 
         // Card navigation within row
         KeyCode::Char('l') | KeyCode::Right => {
             let (key, max) = active_row_key_max(state, home_data);
             state.scroll_row_right(&key, max);
+            refresh_home_cover(state, home_data, pool, tx);
         }
         KeyCode::Char('h') | KeyCode::Left => {
             let (key, _) = active_row_key_max(state, home_data);
             state.scroll_row_left(&key);
+            refresh_home_cover(state, home_data, pool, tx);
         }
 
         // Open detail for highlighted card
@@ -262,7 +268,9 @@ async fn handle_home(
                 let in_wl  = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
                 let w_eps  = db::user::get_watched_episodes(pool, anime.id).await.unwrap_or_default();
                 state.in_watchlist = in_wl;
-                trigger_cover_download(anime.clone(), pool.clone(), tx.clone());
+                if state.cover_anime_id != Some(anime.id) || state.cover_state.is_none() {
+                    trigger_cover_download(anime.clone(), pool.clone(), tx.clone());
+                }
                 state.open_detail(anime);
                 // Set after open_detail (which clears watched_episodes)
                 state.watched_episodes = w_eps.into_iter().map(|e| e as u32).collect();
@@ -355,6 +363,26 @@ fn active_anime(state: &AppState, data: &ui::home::HomeData) -> Option<db::cache
         Seasonal         => &data.seasonal,
     };
     list.get(offset).cloned()
+}
+
+/// Ensure the Home banner cover follows the currently highlighted anime.
+fn refresh_home_cover(
+    state: &mut AppState,
+    data: &ui::home::HomeData,
+    pool: &sqlx::SqlitePool,
+    tx:   &tokio::sync::mpsc::Sender<AppMessage>,
+) {
+    let Some(anime) = active_anime(state, data).or_else(|| data.featured.clone()) else {
+        return;
+    };
+
+    if state.cover_anime_id == Some(anime.id) {
+        return;
+    }
+
+    state.cover_anime_id = Some(anime.id);
+    state.cover_state    = None;
+    trigger_cover_download(anime, pool.clone(), tx.clone());
 }
 
 /// Item count for a given category row.
