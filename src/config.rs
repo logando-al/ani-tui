@@ -51,6 +51,7 @@ pub enum AudioMode {
 pub enum Player {
     #[default]
     Mpv,
+    Iina,
     Vlc,
 }
 
@@ -59,6 +60,7 @@ impl Player {
     pub fn as_str(&self) -> &str {
         match self {
             Player::Mpv => "mpv",
+            Player::Iina => "iina",
             Player::Vlc => "vlc",
         }
     }
@@ -177,6 +179,7 @@ mod tests {
     #[test]
     fn test_player_as_str() {
         assert_eq!(Player::Mpv.as_str(), "mpv");
+        assert_eq!(Player::Iina.as_str(), "iina");
         assert_eq!(Player::Vlc.as_str(), "vlc");
     }
 
@@ -185,7 +188,7 @@ mod tests {
         let original = Config {
             quality:    Quality::P720,
             audio_mode: AudioMode::Dub,
-            player:     Player::Vlc,
+            player:     Player::Iina,
             cache:      CacheConfig::default(),
         };
         let serialized   = toml::to_string_pretty(&original).unwrap();
@@ -193,7 +196,7 @@ mod tests {
 
         assert_eq!(deserialized.quality,    Quality::P720);
         assert_eq!(deserialized.audio_mode, AudioMode::Dub);
-        assert_eq!(deserialized.player,     Player::Vlc);
+        assert_eq!(deserialized.player,     Player::Iina);
     }
 
     #[test]

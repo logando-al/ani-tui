@@ -70,9 +70,20 @@ pub fn resolve_player(preferred: &str) -> String {
                 "mpv".to_string()
             }
         }
+        "iina" => macos_iina_fallback().unwrap_or_else(|| "iina".to_string()),
         "vlc" => "vlc".to_string(),
         other => other.to_string(),
     }
+}
+
+/// Detect whether the relevant runtime dependencies are available on this machine.
+pub fn detect_dependencies() -> (bool, bool, bool, bool) {
+    (
+        command_exists("ani-cli"),
+        command_exists("mpv"),
+        macos_iina_fallback().is_some(),
+        command_exists("vlc"),
+    )
 }
 
 fn command_exists(name: &str) -> bool {

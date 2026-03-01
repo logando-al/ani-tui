@@ -6,3 +6,5 @@ pub mod play_options;
 pub mod play_query;
 pub mod playback;
 pub mod search;
+pub mod settings;
+pub mod setup;

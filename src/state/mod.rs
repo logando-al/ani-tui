@@ -21,6 +21,10 @@ pub enum Screen {
     Search,
     /// Help overlay
     Help,
+    /// Settings overlay
+    Settings,
+    /// Dependency / onboarding overlay
+    Setup,
 }
 
 /// Which category row the cursor is on (Home screen).
@@ -62,6 +66,9 @@ pub struct AppState {
     /// Currently active screen
     pub screen:           Screen,
 
+    /// Base screen to render under overlays
+    pub overlay_base:     Screen,
+
     /// Home screen: which row the cursor is on
     pub active_row:       CategoryRow,
 
@@ -88,6 +95,9 @@ pub struct AppState {
 
     /// Search overlay: which result is highlighted
     pub search_cursor:    usize,
+
+    /// Settings overlay: which preference row is focused
+    pub settings_cursor: usize,
 
     /// Playback query picker: candidate search queries to send to ani-cli
     pub playback_queries: Vec<String>,
@@ -152,6 +162,12 @@ pub struct AppState {
     /// Detail navigation history when drilling into related anime
     detail_history: Vec<DetailSnapshot>,
 
+    /// Runtime dependency status
+    pub has_ani_cli: bool,
+    pub has_mpv: bool,
+    pub has_iina: bool,
+    pub has_vlc: bool,
+
     /// Toast notification: (message, expiry unix timestamp)
     pub toast:            Option<(String, i64)>,
 
@@ -175,6 +191,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             screen:           Screen::Home,
+            overlay_base:     Screen::Home,
             active_row:       CategoryRow::Trending,
             row_offsets:      std::collections::HashMap::new(),
             selected_anime:   None,
@@ -184,6 +201,7 @@ impl AppState {
             search_query:     String::new(),
             search_results:   Vec::new(),
             search_cursor:    0,
+            settings_cursor:  0,
             playback_queries: Vec::new(),
             playback_query_cursor: 0,
             playback_quality_cursor: 0,
@@ -205,6 +223,10 @@ impl AppState {
             detail_related_offset: 0,
             detail_origin_title: None,
             detail_history:     Vec::new(),
+            has_ani_cli:      true,
+            has_mpv:          true,
+            has_iina:         false,
+            has_vlc:          true,
             toast:            None,
             is_loading:       true,
             should_quit:      false,
@@ -262,8 +284,9 @@ impl AppState {
                     Screen::Home
                 }
             }
-            Screen::Search   => Screen::Home,
-            Screen::Help     => Screen::Home,
+            Screen::Search | Screen::Help | Screen::Settings | Screen::Setup => {
+                self.overlay_base.clone()
+            }
             Screen::Home     => {
                 self.should_quit = true;
                 Screen::Home
@@ -298,7 +321,27 @@ impl AppState {
         self.search_query   = String::new();
         self.search_results = Vec::new();
         self.search_cursor  = 0;
+        self.overlay_base   = self.current_base_screen();
         self.screen         = Screen::Search;
+    }
+
+    /// Open the help overlay.
+    pub fn open_help(&mut self) {
+        self.overlay_base = self.current_base_screen();
+        self.screen = Screen::Help;
+    }
+
+    /// Open the settings overlay.
+    pub fn open_settings(&mut self) {
+        self.overlay_base = self.current_base_screen();
+        self.settings_cursor = 0;
+        self.screen = Screen::Settings;
+    }
+
+    /// Open the dependency / setup overlay.
+    pub fn open_setup(&mut self) {
+        self.overlay_base = self.current_base_screen();
+        self.screen = Screen::Setup;
     }
 
     /// Open the playback query picker for the current anime.
@@ -361,6 +404,30 @@ impl AppState {
     pub fn scroll_row_left(&mut self, row: &str) {
         let entry = self.row_offsets.entry(row.to_string()).or_insert(0);
         *entry = entry.saturating_sub(1);
+    }
+
+    /// Return the base screen that should remain visible under overlays.
+    pub fn current_base_screen(&self) -> Screen {
+        match self.screen {
+            Screen::Detail | Screen::Playback | Screen::PlaybackQuery | Screen::PlaybackOptions => {
+                Screen::Detail
+            }
+            Screen::Search | Screen::Help | Screen::Settings | Screen::Setup => self.overlay_base.clone(),
+            Screen::Home => Screen::Home,
+        }
+    }
+
+    /// Update the cached dependency status.
+    pub fn set_dependencies(&mut self, ani_cli: bool, mpv: bool, iina: bool, vlc: bool) {
+        self.has_ani_cli = ani_cli;
+        self.has_mpv = mpv;
+        self.has_iina = iina;
+        self.has_vlc = vlc;
+    }
+
+    /// True when playback can run with the currently installed tools.
+    pub fn has_any_player(&self) -> bool {
+        self.has_mpv || self.has_iina || self.has_vlc
     }
 
     /// Save the current detail screen so a related drill-down can return to it.

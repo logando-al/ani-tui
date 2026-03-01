@@ -315,7 +315,7 @@ fn active_banner_anime<'a>(state: &AppState, data: &'a HomeData) -> Option<&'a A
 }
 
 /// Render all category rows.
-fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData) {
+fn render_rows(frame: &mut Frame, area: Rect, state: &mut AppState, data: &HomeData) {
     let rows: Vec<(String, &str, &[Anime])> = vec![
         ("▶ Continue Watching".to_string(), "continue_watching", &data.continue_watching),
         ("♥ My Watchlist".to_string(),      "watchlist",         &data.watchlist),
@@ -386,7 +386,7 @@ fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData)
 fn render_row(
     frame:     &mut Frame,
     area:      Rect,
-    state:     &AppState,
+    state:     &mut AppState,
     label:     &str,
     key:       &str,
     items:     &[Anime],
@@ -436,7 +436,7 @@ fn render_row(
                 None
             };
             let progress = progress_labels.get(&anime.id).map(String::as_str);
-            render_card(frame, rect, anime, is_active && i == 0, reason, progress);
+            render_card(frame, rect, anime, is_active && i == 0, reason, progress, state);
         }
     }
 }
@@ -450,6 +450,7 @@ fn render_card(
     selected: bool,
     reason: Option<&str>,
     progress: Option<&str>,
+    _state: &mut AppState,
 ) {
     if area.height < 3 {
         return;
@@ -498,7 +499,7 @@ fn render_card(
         ])
         .split(content_area);
 
-    // Cover (halfblock — real image layer added later)
+    // Home cards intentionally keep the stable halfblock renderer.
     frame.render_widget(
         HalfblockCover { anime_id: anime.id, title: anime.display_title() },
         chunks[0],

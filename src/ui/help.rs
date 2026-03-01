@@ -27,6 +27,8 @@ pub fn render_overlay(frame: &mut Frame) {
             ("r",          "Resume from Home / next episode"),
             ("Esc",        "Back / close (restores prior related detail)"),
             ("/",          "Open search"),
+            ("s",          "Open settings"),
+            ("!",          "Open setup / dependency checks"),
             ("+",          "Add to / remove from watchlist"),
             ("n",          "Play next episode from Detail"),
             ("q",          "Quit / Stop playback"),
@@ -35,6 +37,8 @@ pub fn render_overlay(frame: &mut Frame) {
             ("?",          "Toggle this help"),
             ("Shift+R",    "Refresh home screen"),
             ("Search",     "Type normally, use ↑/↓ to pick results and preview"),
+            ("Settings",   "Use j/k to focus rows, h/l or Enter to change"),
+            ("Setup",      "Use r to refresh dependency checks"),
             ("Ctrl+C",     "Force quit"),
         ]),
     ];

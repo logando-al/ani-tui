@@ -52,7 +52,7 @@ enum AppMessage {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // ── Config + DB ───────────────────────────────────────────────────────────
-    let cfg     = config::Config::load().context("Failed to load config")?;
+    let mut cfg = config::Config::load().context("Failed to load config")?;
     let db_path = config::Config::db_path().context("Failed to resolve DB path")?;
     let pool    = db::init(db_path.to_str().unwrap_or(":memory:"))
         .await
@@ -71,6 +71,10 @@ async fn main() -> anyhow::Result<()> {
     // ── App state ─────────────────────────────────────────────────────────────
     let mut state     = AppState::new();
     let mut home_data = ui::home::HomeData::empty();
+    refresh_dependency_status(&mut state);
+    if !state.has_ani_cli || !state.has_any_player() {
+        state.open_setup();
+    }
 
     // ── Image picker (after alternate screen, before event loop) ──────────────
     // guess_protocol() probes the terminal — must happen after EnterAlternateScreen.
@@ -164,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Draw current screen
         terminal.draw(|frame| {
+            let base_screen = state.current_base_screen();
             match state.screen {
                 Screen::Home => {
                     if state.is_loading {
@@ -183,14 +188,20 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Screen::Playback => ui::playback::render(frame, &state),
                 Screen::Search   => {
-                    // Home beneath the overlay
-                    ui::home::render(frame, &mut state, &home_data);
+                    render_base_screen(frame, &mut state, &home_data, &base_screen);
                     ui::search::render_overlay(frame, &state);
                 }
                 Screen::Help => {
-                    // Home beneath the overlay
-                    ui::home::render(frame, &mut state, &home_data);
+                    render_base_screen(frame, &mut state, &home_data, &base_screen);
                     ui::help::render_overlay(frame);
+                }
+                Screen::Settings => {
+                    render_base_screen(frame, &mut state, &home_data, &base_screen);
+                    ui::settings::render_overlay(frame, &state, &cfg);
+                }
+                Screen::Setup => {
+                    render_base_screen(frame, &mut state, &home_data, &base_screen);
+                    ui::setup::render_overlay(frame, &state, &cfg);
                 }
             }
             // Toast notification renders on top of everything
@@ -202,7 +213,7 @@ async fn main() -> anyhow::Result<()> {
         // Poll keyboard with short timeout so background messages stay responsive
         if event::poll(Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
-                handle_key(key, &mut state, &mut home_data, &pool, &cfg, &tx).await;
+                handle_key(key, &mut state, &mut home_data, &pool, &mut cfg, &tx).await;
             }
         }
 
@@ -230,7 +241,7 @@ async fn handle_key(
     state:     &mut AppState,
     home_data: &mut ui::home::HomeData,
     pool:      &sqlx::SqlitePool,
-    cfg:       &config::Config,
+    cfg:       &mut config::Config,
     tx:        &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
     // Ctrl+C works everywhere
@@ -247,6 +258,8 @@ async fn handle_key(
         Screen::Playback => handle_playback(key, state, pool, cfg, tx).await,
         Screen::Search   => handle_search(key, state, pool, tx).await,
         Screen::Help     => { state.go_back(); }
+        Screen::Settings => handle_settings(key, state, cfg).await,
+        Screen::Setup    => handle_setup(key, state).await,
     }
 }
 
@@ -303,7 +316,12 @@ async fn handle_home(
         }
 
         KeyCode::Char('/') => state.open_search(),
-        KeyCode::Char('?') => state.screen = Screen::Help,
+        KeyCode::Char('?') => state.open_help(),
+        KeyCode::Char('s') => state.open_settings(),
+        KeyCode::Char('!') => {
+            refresh_dependency_status(state);
+            state.open_setup();
+        }
 
         // Toggle watchlist for the highlighted card directly from Home
         KeyCode::Char('+') => {
@@ -496,6 +514,11 @@ fn trigger_banner_progress(
     });
 }
 
+fn refresh_dependency_status(state: &mut AppState) {
+    let (ani_cli, mpv, iina, vlc) = api::player::detect_dependencies();
+    state.set_dependencies(ani_cli, mpv, iina, vlc);
+}
+
 fn quality_label(idx: usize) -> &'static str {
     match QUALITY_CHOICES.get(idx) {
         Some(quality) => quality.as_str(),
@@ -576,7 +599,12 @@ async fn handle_detail(
             }
         }
         KeyCode::Char('/')                => state.open_search(),
-        KeyCode::Char('?')               => state.screen = Screen::Help,
+        KeyCode::Char('?')               => state.open_help(),
+        KeyCode::Char('s')               => state.open_settings(),
+        KeyCode::Char('!')               => {
+            refresh_dependency_status(state);
+            state.open_setup();
+        }
         KeyCode::Tab => {
             if !state.detail_recommendations.is_empty() {
                 state.detail_focus = match state.detail_focus {
@@ -857,6 +885,87 @@ async fn handle_search(
     }
 }
 
+async fn handle_settings(
+    key: event::KeyEvent,
+    state: &mut AppState,
+    cfg: &mut config::Config,
+) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => state.go_back(),
+        KeyCode::Char('j') | KeyCode::Down => {
+            state.settings_cursor = (state.settings_cursor + 1).min(2);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            state.settings_cursor = state.settings_cursor.saturating_sub(1);
+        }
+        KeyCode::Char('h') | KeyCode::Left => {
+            if apply_settings_delta(cfg, state.settings_cursor, -1).is_ok() {
+                let _ = cfg.save();
+                state.show_toast("Settings saved", unix_now());
+            }
+            refresh_dependency_status(state);
+        }
+        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
+            if apply_settings_delta(cfg, state.settings_cursor, 1).is_ok() {
+                let _ = cfg.save();
+                state.show_toast("Settings saved", unix_now());
+            }
+            refresh_dependency_status(state);
+        }
+        _ => {}
+    }
+}
+
+async fn handle_setup(
+    key: event::KeyEvent,
+    state: &mut AppState,
+) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => state.go_back(),
+        KeyCode::Char('r') => {
+            refresh_dependency_status(state);
+            state.show_toast("Dependency check refreshed", unix_now());
+        }
+        KeyCode::Char('s') => state.open_settings(),
+        _ => {}
+    }
+}
+
+fn apply_settings_delta(
+    cfg: &mut config::Config,
+    row: usize,
+    delta: i32,
+) -> anyhow::Result<()> {
+    match row {
+        0 => {
+            let values = [config::Player::Mpv, config::Player::Iina, config::Player::Vlc];
+            let current = values.iter().position(|value| value == &cfg.player).unwrap_or(0) as i32;
+            let next = (current + delta).rem_euclid(values.len() as i32) as usize;
+            cfg.player = values[next].clone();
+        }
+        1 => {
+            let values = [
+                config::Quality::Best,
+                config::Quality::P1080,
+                config::Quality::P720,
+                config::Quality::P480,
+                config::Quality::P360,
+            ];
+            let current = values.iter().position(|value| value == &cfg.quality).unwrap_or(1) as i32;
+            let next = (current + delta).rem_euclid(values.len() as i32) as usize;
+            cfg.quality = values[next].clone();
+        }
+        2 => {
+            cfg.audio_mode = match cfg.audio_mode {
+                config::AudioMode::Sub => config::AudioMode::Dub,
+                config::AudioMode::Dub => config::AudioMode::Sub,
+            };
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 // ── Playback screen ───────────────────────────────────────────────────────────
 
 async fn handle_playback(
@@ -905,6 +1014,17 @@ async fn start_playback(
     state.last_played_anime_id = state.selected_anime.as_ref().map(|anime| anime.id);
     state.screen      = Screen::Detail;
     state.pending_playback_query = None;
+
+    let (has_ani_cli, has_mpv, has_iina, has_vlc) = api::player::detect_dependencies();
+    state.set_dependencies(has_ani_cli, has_mpv, has_iina, has_vlc);
+    if !has_ani_cli {
+        state.show_toast("ani-cli is not installed. Open ! for setup help.", unix_now());
+        return;
+    }
+    if !(has_mpv || has_iina || has_vlc) {
+        state.show_toast("No supported player found. Open ! for setup help.", unix_now());
+        return;
+    }
 
     let mut child = match api::player::spawn_async(&opts) {
         Ok(c)  => c,
@@ -1039,6 +1159,24 @@ fn render_loading(frame: &mut ratatui::Frame) {
         area,
     );
     frame.render_widget(msg, vert[1]);
+}
+
+fn render_base_screen(
+    frame: &mut ratatui::Frame,
+    state: &mut AppState,
+    home_data: &ui::home::HomeData,
+    base_screen: &Screen,
+) {
+    match base_screen {
+        Screen::Detail if state.selected_anime.is_some() => ui::detail::render(frame, state),
+        _ => {
+            if state.is_loading {
+                render_loading(frame);
+            } else {
+                ui::home::render(frame, state, home_data);
+            }
+        }
+    }
 }
 
 // ─── Search helper ────────────────────────────────────────────────────────────
