@@ -76,12 +76,28 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
         .episodes
         .map(|e| format!("{} eps", e))
         .unwrap_or_else(|| "? eps".to_string());
+    let fmt     = anime.format.as_deref().unwrap_or("TV");
+    let status  = anime.status.as_deref().unwrap_or("Unknown");
+    let year    = anime
+        .season_year
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "?".to_string());
     let in_watchlist = data.watchlist.iter().any(|item| item.id == anime.id);
     let watchlist_label = if in_watchlist {
         " - Remove "
     } else {
         " + Watchlist "
     };
+    let watched = state
+        .banner_progress
+        .filter(|(anime_id, _)| *anime_id == anime.id)
+        .map(|(_, watched)| watched)
+        .unwrap_or(0);
+    let progress = format!(
+        "{} / {} watched",
+        watched,
+        anime.episodes.map(|value| value.to_string()).unwrap_or_else(|| "?".to_string())
+    );
     let desc    = anime
         .description
         .as_deref()
@@ -109,6 +125,16 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
                 .resize(ratatui_image::Resize::Fit(None));
             frame.render_stateful_widget(image_widget, cover_inner, cover);
         }
+    } else if state.has_image_support() && state.cover_anime_id == Some(anime.id) {
+        let label = if state.cover_failed_anime_id == Some(anime.id) {
+            "Cover unavailable"
+        } else {
+            "Loading cover..."
+        };
+        let loading = Paragraph::new(label)
+            .style(Style::default().fg(Color::Rgb(160, 160, 180)).bg(Color::Rgb(14, 14, 22)))
+            .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(loading, cover_inner);
     } else {
         frame.render_widget(
             HalfblockCover { anime_id: anime.id, title: anime.display_title() },
@@ -130,9 +156,20 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            format!("{}  |  {}  |  {}", score, eps, genres),
+            format!("{}  |  {}  |  {}  |  {}  |  {}", score, eps, fmt, year, status),
             Style::default().fg(Color::Rgb(180, 180, 180)),
         )),
+        Line::from(vec![
+            Span::styled(
+                format!(" {} ", progress),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(235, 235, 235))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(genres, Style::default().fg(Color::Rgb(180, 0, 255))),
+        ]),
         Line::from(""),
         Line::from(Span::styled(
             desc,
@@ -141,7 +178,7 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
         Line::from(""),
         Line::from(vec![
             Span::styled(
-                " ▶ Play ",
+                " Enter Play ",
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::White)
@@ -153,6 +190,21 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
                 Style::default()
                     .fg(Color::White)
                     .bg(Color::Rgb(60, 60, 60)),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                " d Detail ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(210, 210, 210)),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                " r Resume ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(180, 0, 255))
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
     ];

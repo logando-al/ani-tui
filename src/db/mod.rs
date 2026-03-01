@@ -56,6 +56,7 @@ mod tests {
         assert!(tables.contains(&"continue_watching".to_string()));
         assert!(tables.contains(&"watchlist".to_string()));
         assert!(tables.contains(&"playback_prefs".to_string()));
+        assert!(tables.contains(&"audio_prefs".to_string()));
         assert!(tables.contains(&"sync_meta".to_string()));
     }
 

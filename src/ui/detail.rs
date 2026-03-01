@@ -23,9 +23,11 @@ pub fn render(frame: &mut Frame, state: &mut AppState) {
         Span::styled(" ← Esc", Style::default().fg(Color::Rgb(120, 120, 120))),
         Span::raw("  "),
         Span::styled("Enter", Style::default().fg(Color::Rgb(180, 0, 255))),
-        Span::raw(" Play  "),
+        Span::raw(" Play options  "),
         Span::styled("+", Style::default().fg(Color::Rgb(180, 0, 255))),
         Span::raw(" Watchlist  "),
+        Span::styled("h/l", Style::default().fg(Color::Rgb(180, 0, 255))),
+        Span::raw(" Episode  "),
         Span::styled("/", Style::default().fg(Color::Rgb(180, 0, 255))),
         Span::raw(" Search  "),
         Span::styled("?", Style::default().fg(Color::Rgb(180, 0, 255))),
@@ -77,6 +79,16 @@ fn render_info(frame: &mut Frame, area: Rect, state: &mut AppState, anime: &Anim
                 .resize(ratatui_image::Resize::Fit(None));
             frame.render_stateful_widget(image_widget, cover_inner, cover);
         }
+    } else if state.has_image_support() && state.cover_anime_id == Some(anime.id) {
+        let label = if state.cover_failed_anime_id == Some(anime.id) {
+            "Cover unavailable"
+        } else {
+            "Loading cover..."
+        };
+        let loading = Paragraph::new(label)
+            .style(Style::default().fg(Color::Rgb(160, 160, 180)).bg(Color::Rgb(14, 14, 22)))
+            .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(loading, cover_inner);
     } else {
         frame.render_widget(
             HalfblockCover { anime_id: anime.id, title: anime.display_title() },
@@ -91,10 +103,10 @@ fn render_info(frame: &mut Frame, area: Rect, state: &mut AppState, anime: &Anim
     );
 
     // Metadata
-    render_metadata(frame, cols[1], anime);
+    render_metadata(frame, cols[1], state, anime);
 }
 
-fn render_metadata(frame: &mut Frame, area: Rect, anime: &Anime) {
+fn render_metadata(frame: &mut Frame, area: Rect, state: &AppState, anime: &Anime) {
     let title   = anime.display_title();
     let score   = anime.score.map(|s| format!("★ {:.1}", s as f32 / 10.0)).unwrap_or_else(|| "★ N/A".to_string());
     let eps     = anime.episodes.map(|e| format!("{} eps", e)).unwrap_or_else(|| "? eps".to_string());
@@ -112,7 +124,17 @@ fn render_metadata(frame: &mut Frame, area: Rect, anime: &Anime) {
         .collect::<String>();
     let dub_tag = if anime.has_dub() { "  Sub + Dub" } else { "  Sub only" };
 
-    let lines = vec![
+    let playback_status = if state.now_playing.is_some()
+        && state.last_played_anime_id == Some(anime.id)
+    {
+        state.now_playing.as_deref()
+    } else if state.last_played_anime_id == Some(anime.id) {
+        state.last_played.as_deref()
+    } else {
+        None
+    };
+
+    let mut lines = vec![
         Line::from(Span::styled(
             title,
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
@@ -125,6 +147,21 @@ fn render_metadata(frame: &mut Frame, area: Rect, anime: &Anime) {
         Line::from(""),
         Line::from(Span::styled(desc, Style::default().fg(Color::Rgb(210, 210, 210)))),
     ];
+
+    if let Some(status_line) = playback_status {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                " Playback ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(180, 0, 255))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(status_line, Style::default().fg(Color::Rgb(210, 210, 210))),
+        ]));
+    }
 
     let para = Paragraph::new(lines)
         .block(Block::default().style(Style::default().bg(Color::Rgb(10, 10, 16))))

@@ -17,6 +17,14 @@ use state::{AppState, Screen};
 use std::{io, time::Duration};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+const QUALITY_CHOICES: [config::Quality; 5] = [
+    config::Quality::Best,
+    config::Quality::P1080,
+    config::Quality::P720,
+    config::Quality::P480,
+    config::Quality::P360,
+];
+
 // ─── Message channel ──────────────────────────────────────────────────────────
 
 /// Messages sent from background tokio tasks to the UI event loop.
@@ -35,6 +43,8 @@ enum AppMessage {
     CoverFailed(i64),
     /// Watchlist changed — send fresh list to update home row immediately
     WatchlistUpdated(Vec<db::cache::Anime>),
+    /// Home banner watched-episode count for the active anime
+    BannerProgress(i64, usize),
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -117,15 +127,19 @@ async fn main() -> anyhow::Result<()> {
                     state.search_cursor  = 0;
                 }
                 AppMessage::CoverReady(anime_id, img) => {
-                    // Only apply if we're still on the same anime's detail screen
                     if state.cover_anime_id == Some(anime_id) {
                         let protocol = state.picker.as_mut().map(|p| p.new_resize_protocol(img));
                         state.cover_state = protocol;
+                        state.cover_failed_anime_id = None;
                     }
                 }
                 AppMessage::CoverFailed(anime_id) => {
-                    // Notify the user only if we're still viewing that anime
-                    if state.cover_anime_id == Some(anime_id) && state.screen == Screen::Detail {
+                    if state.cover_anime_id == Some(anime_id) {
+                        state.cover_failed_anime_id = Some(anime_id);
+                    }
+                    if state.cover_anime_id == Some(anime_id)
+                        && matches!(state.screen, Screen::Detail | Screen::Home)
+                    {
                         state.show_toast("Cover image unavailable", unix_now());
                     }
                 }
@@ -135,6 +149,11 @@ async fn main() -> anyhow::Result<()> {
                     let offset  = state.row_offset("watchlist").min(max_idx);
                     state.row_offsets.insert("watchlist".to_string(), offset);
                     refresh_home_cover(&mut state, &home_data, &pool, &tx);
+                }
+                AppMessage::BannerProgress(anime_id, watched) => {
+                    if state.cover_anime_id == Some(anime_id) {
+                        state.banner_progress = Some((anime_id, watched));
+                    }
                 }
             }
         }
@@ -157,6 +176,10 @@ async fn main() -> anyhow::Result<()> {
                 Screen::PlaybackQuery => {
                     ui::detail::render(frame, &mut state);
                     ui::play_query::render_overlay(frame, &state);
+                }
+                Screen::PlaybackOptions => {
+                    ui::detail::render(frame, &mut state);
+                    ui::play_options::render_overlay(frame, &state);
                 }
                 Screen::Playback => ui::playback::render(frame, &state),
                 Screen::Search   => {
@@ -220,6 +243,7 @@ async fn handle_key(
         Screen::Home     => handle_home(key, state, home_data, pool, cfg, tx).await,
         Screen::Detail   => handle_detail(key, state, pool, cfg, tx).await,
         Screen::PlaybackQuery => handle_playback_query(key, state, pool, cfg, tx).await,
+        Screen::PlaybackOptions => handle_playback_options(key, state, pool, cfg, tx).await,
         Screen::Playback => handle_playback(key, state, pool, cfg, tx).await,
         Screen::Search   => handle_search(key, state, pool, tx).await,
         Screen::Help     => { state.go_back(); }
@@ -263,17 +287,18 @@ async fn handle_home(
         }
 
         // Open detail for highlighted card
-        KeyCode::Enter => {
+        KeyCode::Enter | KeyCode::Char('d') => {
             if let Some(anime) = active_anime(state, home_data) {
-                let in_wl  = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
-                let w_eps  = db::user::get_watched_episodes(pool, anime.id).await.unwrap_or_default();
-                state.in_watchlist = in_wl;
-                if state.cover_anime_id != Some(anime.id) || state.cover_state.is_none() {
-                    trigger_cover_download(anime.clone(), pool.clone(), tx.clone());
-                }
-                state.open_detail(anime);
-                // Set after open_detail (which clears watched_episodes)
-                state.watched_episodes = w_eps.into_iter().map(|e| e as u32).collect();
+                open_detail_from_anime(state, anime, pool, tx).await;
+            }
+        }
+
+        // Quick resume from Home: open detail, jump to the next unwatched episode,
+        // then continue through the normal playback flow.
+        KeyCode::Char('r') => {
+            if let Some(anime) = active_anime(state, home_data) {
+                open_detail_from_anime(state, anime, pool, tx).await;
+                begin_playback_flow(state, pool, cfg, false).await;
             }
         }
 
@@ -309,7 +334,7 @@ async fn handle_home(
         }
 
         // Refresh home data (re-sync respecting TTLs)
-        KeyCode::Char('r') => {
+        KeyCode::Char('R') => {
             state.is_loading = true;
             let pool2 = pool.clone();
             let cfg2  = cfg.clone();
@@ -365,6 +390,60 @@ fn active_anime(state: &AppState, data: &ui::home::HomeData) -> Option<db::cache
     list.get(offset).cloned()
 }
 
+async fn open_detail_from_anime(
+    state: &mut AppState,
+    anime: db::cache::Anime,
+    pool:  &sqlx::SqlitePool,
+    tx:    &tokio::sync::mpsc::Sender<AppMessage>,
+) {
+    let in_wl = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
+    let watched = db::user::get_watched_episodes(pool, anime.id).await.unwrap_or_default();
+    state.in_watchlist = in_wl;
+    if state.cover_anime_id != Some(anime.id) || state.cover_state.is_none() {
+        state.cover_failed_anime_id = None;
+        trigger_cover_download(anime.clone(), pool.clone(), tx.clone());
+    }
+    state.open_detail(anime);
+    state.set_watched_episodes(watched.into_iter().map(|e| e as u32).collect());
+}
+
+async fn begin_playback_flow(
+    state: &mut AppState,
+    pool:  &sqlx::SqlitePool,
+    cfg:   &config::Config,
+    force_resume: bool,
+) {
+    let Some(anime) = state.selected_anime.clone() else {
+        return;
+    };
+
+    if force_resume {
+        state.selected_episode = Some(state.next_unwatched_episode());
+    }
+
+    let default_audio = db::user::get_audio_mode(pool, anime.id)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| cfg.audio_mode.clone());
+    let use_dub = anime.has_dub() && default_audio == config::AudioMode::Dub;
+
+    if let Some(saved_query) = db::user::get_playback_query(pool, anime.id).await.unwrap_or(None) {
+        state.open_playback_options(
+            saved_query,
+            quality_index(&cfg.quality),
+            use_dub,
+        );
+    } else if anime.playback_queries().len() > 1 {
+        state.open_playback_query_picker(&anime);
+    } else {
+        state.open_playback_options(
+            anime.playback_query(),
+            quality_index(&cfg.quality),
+            use_dub,
+        );
+    }
+}
+
 /// Ensure the Home banner cover follows the currently highlighted anime.
 fn refresh_home_cover(
     state: &mut AppState,
@@ -377,12 +456,47 @@ fn refresh_home_cover(
     };
 
     if state.cover_anime_id == Some(anime.id) {
+        if state.banner_progress.is_none() {
+            trigger_banner_progress(anime.id, pool.clone(), tx.clone());
+        }
         return;
     }
 
-    state.cover_anime_id = Some(anime.id);
+    let anime_id = anime.id;
+    state.cover_anime_id = Some(anime_id);
     state.cover_state    = None;
+    state.cover_failed_anime_id = None;
+    state.banner_progress = None;
     trigger_cover_download(anime, pool.clone(), tx.clone());
+    trigger_banner_progress(anime_id, pool.clone(), tx.clone());
+}
+
+fn trigger_banner_progress(
+    anime_id: i64,
+    pool: sqlx::SqlitePool,
+    tx: tokio::sync::mpsc::Sender<AppMessage>,
+) {
+    tokio::spawn(async move {
+        let watched = db::user::get_watched_episodes(&pool, anime_id)
+            .await
+            .map(|eps| eps.len())
+            .unwrap_or(0);
+        let _ = tx.send(AppMessage::BannerProgress(anime_id, watched)).await;
+    });
+}
+
+fn quality_label(idx: usize) -> &'static str {
+    match QUALITY_CHOICES.get(idx) {
+        Some(quality) => quality.as_str(),
+        None => config::Quality::P1080.as_str(),
+    }
+}
+
+fn quality_index(quality: &config::Quality) -> usize {
+    QUALITY_CHOICES
+        .iter()
+        .position(|candidate| candidate == quality)
+        .unwrap_or(1)
 }
 
 /// Item count for a given category row.
@@ -463,33 +577,7 @@ async fn handle_detail(
 
         // Play
         KeyCode::Enter => {
-            if let Some(anime) = state.selected_anime.clone() {
-                if let Some(saved_query) = db::user::get_playback_query(pool, anime.id).await.unwrap_or(None) {
-                    let ep    = state.selected_episode.unwrap_or(1);
-                    let title = anime.display_title().to_string();
-                    let opts  = api::player::PlayOptions {
-                        title:   saved_query,
-                        episode: ep,
-                        quality: cfg.quality.as_str().to_string(),
-                        dub:     cfg.audio_mode == config::AudioMode::Dub,
-                        player:  cfg.player.as_str().to_string(),
-                    };
-                    start_playback(state, opts, title, ep, tx, pool).await;
-                } else if anime.playback_queries().len() > 1 {
-                    state.open_playback_query_picker(&anime);
-                } else {
-                    let ep    = state.selected_episode.unwrap_or(1);
-                    let title = anime.display_title().to_string();
-                    let opts  = api::player::PlayOptions {
-                        title:   anime.playback_query(),
-                        episode: ep,
-                        quality: cfg.quality.as_str().to_string(),
-                        dub:     cfg.audio_mode == config::AudioMode::Dub,
-                        player:  cfg.player.as_str().to_string(),
-                    };
-                    start_playback(state, opts, title, ep, tx, pool).await;
-                }
-            }
+            begin_playback_flow(state, pool, cfg, false).await;
         }
 
         // Watchlist toggle — updates home row immediately via WatchlistUpdated
@@ -531,7 +619,7 @@ async fn handle_playback_query(
     state: &mut AppState,
     pool:  &sqlx::SqlitePool,
     cfg:   &config::Config,
-    tx:    &tokio::sync::mpsc::Sender<AppMessage>,
+    _tx:   &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => state.go_back(),
@@ -545,19 +633,69 @@ async fn handle_playback_query(
         }
         KeyCode::Enter => {
             if let Some(anime) = state.selected_anime.clone() {
-                let ep    = state.selected_episode.unwrap_or(1);
-                let title = anime.display_title().to_string();
                 let query = state
                     .playback_queries
                     .get(state.playback_query_cursor)
                     .cloned()
                     .unwrap_or_else(|| anime.playback_query());
                 let _ = db::user::set_playback_query(pool, anime.id, &query, unix_now()).await;
-                let opts  = api::player::PlayOptions {
+                let preferred_audio = db::user::get_audio_mode(pool, anime.id)
+                    .await
+                    .unwrap_or(None)
+                    .unwrap_or_else(|| cfg.audio_mode.clone());
+                state.open_playback_options(
+                    query,
+                    quality_index(&cfg.quality),
+                    anime.has_dub() && preferred_audio == config::AudioMode::Dub,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn handle_playback_options(
+    key:   event::KeyEvent,
+    state: &mut AppState,
+    pool:  &sqlx::SqlitePool,
+    cfg:   &config::Config,
+    tx:    &tokio::sync::mpsc::Sender<AppMessage>,
+) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => state.go_back(),
+        KeyCode::Down | KeyCode::Char('j') => {
+            if state.playback_quality_cursor + 1 < QUALITY_CHOICES.len() {
+                state.playback_quality_cursor += 1;
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.playback_quality_cursor = state.playback_quality_cursor.saturating_sub(1);
+        }
+        KeyCode::Left | KeyCode::Char('h') | KeyCode::Right | KeyCode::Char('l') => {
+            if state.selected_anime.as_ref().is_some_and(|anime| anime.has_dub()) {
+                state.pending_dub = !state.pending_dub;
+            }
+        }
+        KeyCode::Enter => {
+            if let Some(anime) = state.selected_anime.clone() {
+                let ep    = state.selected_episode.unwrap_or(1);
+                let title = anime.display_title().to_string();
+                let query = state
+                    .pending_playback_query
+                    .clone()
+                    .unwrap_or_else(|| anime.playback_query());
+                let audio = if anime.has_dub() && state.pending_dub {
+                    config::AudioMode::Dub
+                } else {
+                    config::AudioMode::Sub
+                };
+                let _ = db::user::set_audio_mode(pool, anime.id, audio.clone(), unix_now()).await;
+
+                let opts = api::player::PlayOptions {
                     title:   query,
                     episode: ep,
-                    quality: cfg.quality.as_str().to_string(),
-                    dub:     cfg.audio_mode == config::AudioMode::Dub,
+                    quality: quality_label(state.playback_quality_cursor).to_string(),
+                    dub:     audio == config::AudioMode::Dub,
                     player:  cfg.player.as_str().to_string(),
                 };
                 start_playback(state, opts, title, ep, tx, pool).await;
@@ -611,13 +749,8 @@ async fn handle_search(
 
         KeyCode::Enter => {
             if let Some(anime) = state.search_results.get(state.search_cursor).cloned() {
-                let in_wl = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
-                let w_eps = db::user::get_watched_episodes(pool, anime.id).await.unwrap_or_default();
-                state.in_watchlist = in_wl;
-                trigger_cover_download(anime.clone(), pool.clone(), tx.clone());
                 state.screen = Screen::Home; // close search first
-                state.open_detail(anime);
-                state.watched_episodes = w_eps.into_iter().map(|e| e as u32).collect();
+                open_detail_from_anime(state, anime, pool, tx).await;
             }
         }
 
@@ -643,7 +776,7 @@ async fn handle_playback(
     state: &mut AppState,
     pool:  &sqlx::SqlitePool,
     cfg:   &config::Config,
-    tx:    &tokio::sync::mpsc::Sender<AppMessage>,
+    _tx:   &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => {
@@ -652,25 +785,13 @@ async fn handle_playback(
         }
         // Next episode without leaving playback
         KeyCode::Char('n') => {
-            if let Some(anime) = state.selected_anime.clone() {
+            if state.selected_anime.is_some() {
                 let ep  = state.selected_episode.unwrap_or(1);
                 let max = state.episode_list.last().copied().unwrap_or(1);
                 if ep < max {
                     let next = ep + 1;
                     state.selected_episode = Some(next);
-                    let title = anime.display_title().to_string();
-                    let query = db::user::get_playback_query(pool, anime.id)
-                        .await
-                        .unwrap_or(None)
-                        .unwrap_or_else(|| anime.playback_query());
-                    let opts  = api::player::PlayOptions {
-                        title:   query,
-                        episode: next,
-                        quality: cfg.quality.as_str().to_string(),
-                        dub:     cfg.audio_mode == config::AudioMode::Dub,
-                        player:  cfg.player.as_str().to_string(),
-                    };
-                    start_playback(state, opts, title, next, tx, pool).await;
+                    begin_playback_flow(state, pool, cfg, false).await;
                 }
             }
         }
@@ -692,7 +813,10 @@ async fn start_playback(
     state.stop_player();
     state.playback_logs.clear();
     state.now_playing = Some(format!("{} — Episode {}", title, episode));
+    state.last_played = state.now_playing.clone();
+    state.last_played_anime_id = state.selected_anime.as_ref().map(|anime| anime.id);
     state.screen      = Screen::Detail;
+    state.pending_playback_query = None;
 
     let mut child = match api::player::spawn_async(&opts) {
         Ok(c)  => c,
@@ -711,6 +835,7 @@ async fn start_playback(
         let pool2    = pool.clone();
         let anime_id = anime.id;
         let now      = unix_now();
+        state.watched_episodes.insert(episode);
         tokio::spawn(async move {
             let _ = db::user::record_watched(&pool2, anime_id, episode as i64, now).await;
         });

@@ -13,6 +13,8 @@ pub enum Screen {
     Detail,
     /// Playback query picker overlay shown on top of Detail
     PlaybackQuery,
+    /// Playback options overlay shown on top of Detail
+    PlaybackOptions,
     /// Playback screen: log stream + controls
     Playback,
     /// Search overlay (shown on top of Home or Detail)
@@ -70,6 +72,15 @@ pub struct AppState {
     /// Playback query picker: selected query index
     pub playback_query_cursor: usize,
 
+    /// Playback options: currently selected quality index
+    pub playback_quality_cursor: usize,
+
+    /// Playback options: pending query chosen before launch
+    pub pending_playback_query: Option<String>,
+
+    /// Playback options: pending sub/dub mode for the next launch
+    pub pending_dub:       bool,
+
     /// Playback: oneshot sender to stop the background player task
     pub player_stop:      Option<tokio::sync::oneshot::Sender<()>>,
 
@@ -88,8 +99,14 @@ pub struct AppState {
     /// Cover image: which anime ID the current cover_state belongs to
     pub cover_anime_id:   Option<i64>,
 
+    /// Cover image: last anime ID whose image failed to load
+    pub cover_failed_anime_id: Option<i64>,
+
     /// Terminal image picker (initialized once at startup)
     pub picker:           Option<Picker>,
+
+    /// Home banner: watched episode count for the selected anime
+    pub banner_progress:  Option<(i64, usize)>,
 
     /// Toast notification: (message, expiry unix timestamp)
     pub toast:            Option<(String, i64)>,
@@ -102,6 +119,12 @@ pub struct AppState {
 
     /// Detail screen: set of watched episode numbers for the current anime
     pub watched_episodes: HashSet<u32>,
+
+    /// Last launched playback label for the current session
+    pub last_played:      Option<String>,
+
+    /// Which anime the last launched playback belongs to
+    pub last_played_anime_id: Option<i64>,
 }
 
 impl AppState {
@@ -119,17 +142,24 @@ impl AppState {
             search_cursor:    0,
             playback_queries: Vec::new(),
             playback_query_cursor: 0,
+            playback_quality_cursor: 0,
+            pending_playback_query: None,
+            pending_dub: false,
             player_stop:      None,
             now_playing:      None,
             playback_logs:    Vec::new(),
             in_watchlist:     false,
             cover_state:      None,
             cover_anime_id:   None,
+            cover_failed_anime_id: None,
             picker:           None,
+            banner_progress:  None,
             toast:            None,
             is_loading:       true,
             should_quit:      false,
             watched_episodes: HashSet::new(),
+            last_played:      None,
+            last_played_anime_id: None,
         }
     }
 
@@ -173,6 +203,7 @@ impl AppState {
         self.screen = match self.screen {
             Screen::Playback => Screen::Detail,
             Screen::PlaybackQuery => Screen::Detail,
+            Screen::PlaybackOptions => Screen::Detail,
             Screen::Detail   => Screen::Home,
             Screen::Search   => Screen::Home,
             Screen::Help     => Screen::Home,
@@ -211,7 +242,35 @@ impl AppState {
     pub fn open_playback_query_picker(&mut self, anime: &Anime) {
         self.playback_queries = anime.playback_queries();
         self.playback_query_cursor = 0;
+        self.pending_playback_query = None;
         self.screen = Screen::PlaybackQuery;
+    }
+
+    /// Open the playback options overlay after a query has been chosen.
+    pub fn open_playback_options(&mut self, query: String, quality_idx: usize, dub: bool) {
+        self.pending_playback_query = Some(query);
+        self.playback_quality_cursor = quality_idx;
+        self.pending_dub = dub;
+        self.screen = Screen::PlaybackOptions;
+    }
+
+    /// Update watched progress and set the selected episode to the next unwatched.
+    pub fn set_watched_episodes(&mut self, watched: HashSet<u32>) {
+        self.watched_episodes = watched;
+        let next = self.next_unwatched_episode();
+        self.selected_episode = Some(next);
+        let pills_per_row = 10usize;
+        self.episode_offset = next.saturating_sub(1) as usize / pills_per_row * pills_per_row;
+    }
+
+    /// Return the next unwatched episode, defaulting to 1 when all known episodes are watched.
+    pub fn next_unwatched_episode(&self) -> u32 {
+        self.episode_list
+            .iter()
+            .copied()
+            .find(|ep| !self.watched_episodes.contains(ep))
+            .or_else(|| self.episode_list.last().copied())
+            .unwrap_or(1)
     }
 
     /// Push a log line to the playback log buffer (capped at 200 lines).
@@ -319,6 +378,22 @@ mod tests {
         assert_eq!(state.screen, Screen::Detail);
         assert_eq!(state.selected_anime.as_ref().unwrap().id, 42);
         assert_eq!(state.selected_episode, Some(1));
+    }
+
+    #[test]
+    fn test_set_watched_episodes_selects_next_unwatched() {
+        let mut state = AppState::new();
+        state.open_detail(dummy_anime(42));
+        state.set_watched_episodes([1, 2, 4].into_iter().collect());
+        assert_eq!(state.selected_episode, Some(3));
+    }
+
+    #[test]
+    fn test_next_unwatched_falls_back_to_last_episode_when_complete() {
+        let mut state = AppState::new();
+        state.open_detail(dummy_anime(42));
+        state.set_watched_episodes((1..=12).collect());
+        assert_eq!(state.selected_episode, Some(12));
     }
 
     #[test]

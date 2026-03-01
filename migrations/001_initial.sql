@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS playback_prefs (
     updated_at      INTEGER NOT NULL
 );
 
+-- Preferred audio mode per anime ("sub" / "dub")
+CREATE TABLE IF NOT EXISTS audio_prefs (
+    anime_id        INTEGER PRIMARY KEY REFERENCES anime(id),
+    audio_mode      TEXT    NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
+
 -- ─── SYNC META ────────────────────────────────────────────────────────────────
 
 -- Tracks when each category was last fetched from AniList

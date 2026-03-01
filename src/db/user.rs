@@ -1,5 +1,6 @@
 //! User data: watch history, continue watching, watchlist.
 
+use crate::config::AudioMode;
 use crate::error::Result;
 use sqlx::SqlitePool;
 
@@ -200,6 +201,51 @@ pub async fn get_playback_query(pool: &SqlitePool, anime_id: i64) -> Result<Opti
     Ok(query)
 }
 
+/// Save the preferred audio mode for a show.
+pub async fn set_audio_mode(
+    pool:     &SqlitePool,
+    anime_id: i64,
+    audio:    AudioMode,
+    now:      i64,
+) -> Result<()> {
+    let value = match audio {
+        AudioMode::Sub => "sub",
+        AudioMode::Dub => "dub",
+    };
+
+    sqlx::query(
+        "INSERT INTO audio_prefs (anime_id, audio_mode, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(anime_id) DO UPDATE SET
+             audio_mode = excluded.audio_mode,
+             updated_at = excluded.updated_at",
+    )
+    .bind(anime_id)
+    .bind(value)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get the preferred audio mode for a show, if one has been saved before.
+pub async fn get_audio_mode(pool: &SqlitePool, anime_id: i64) -> Result<Option<AudioMode>> {
+    let audio = sqlx::query_scalar::<_, String>(
+        "SELECT audio_mode FROM audio_prefs WHERE anime_id = ?",
+    )
+    .bind(anime_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(audio.map(|value| {
+        if value.eq_ignore_ascii_case("dub") {
+            AudioMode::Dub
+        } else {
+            AudioMode::Sub
+        }
+    }))
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -389,5 +435,24 @@ mod tests {
 
         let query = get_playback_query(&pool, 1).await.unwrap();
         assert_eq!(query.as_deref(), Some("New Query"));
+    }
+
+    #[tokio::test]
+    async fn test_set_and_get_audio_mode() {
+        let pool = setup().await;
+        set_audio_mode(&pool, 1, AudioMode::Dub, 123).await.unwrap();
+
+        let audio = get_audio_mode(&pool, 1).await.unwrap();
+        assert_eq!(audio, Some(AudioMode::Dub));
+    }
+
+    #[tokio::test]
+    async fn test_set_audio_mode_updates_existing() {
+        let pool = setup().await;
+        set_audio_mode(&pool, 1, AudioMode::Sub, 100).await.unwrap();
+        set_audio_mode(&pool, 1, AudioMode::Dub, 200).await.unwrap();
+
+        let audio = get_audio_mode(&pool, 1).await.unwrap();
+        assert_eq!(audio, Some(AudioMode::Dub));
     }
 }
