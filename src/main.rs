@@ -558,7 +558,23 @@ async fn handle_detail(
     tx:    &tokio::sync::mpsc::Sender<AppMessage>,
 ) {
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => state.go_back(),
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.go_back();
+            if state.screen == Screen::Detail {
+                if let Some(anime) = state.selected_anime.clone() {
+                    let in_wl = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
+                    let watched = db::user::get_watched_episodes(pool, anime.id).await.unwrap_or_default();
+                    state.in_watchlist = in_wl;
+                    state.set_watched_episodes(watched.into_iter().map(|e| e as u32).collect());
+                    if state.cover_anime_id != Some(anime.id) || state.cover_state.is_none() {
+                        state.cover_anime_id = Some(anime.id);
+                        state.cover_state = None;
+                        state.cover_failed_anime_id = None;
+                        trigger_cover_download(anime, pool.clone(), tx.clone());
+                    }
+                }
+            }
+        }
         KeyCode::Char('/')                => state.open_search(),
         KeyCode::Char('?')               => state.screen = Screen::Help,
         KeyCode::Tab => {
@@ -588,6 +604,10 @@ async fn handle_detail(
                 state::DetailFocus::Related => {
                     if state.detail_related_cursor + 1 < state.detail_recommendations.len() {
                         state.detail_related_cursor += 1;
+                        let visible = 3usize;
+                        if state.detail_related_cursor >= state.detail_related_offset + visible {
+                            state.detail_related_offset += 1;
+                        }
                     }
                 }
             }
@@ -606,7 +626,12 @@ async fn handle_detail(
                     }
                 }
                 state::DetailFocus::Related => {
-                    state.detail_related_cursor = state.detail_related_cursor.saturating_sub(1);
+                    if state.detail_related_cursor > 0 {
+                        state.detail_related_cursor -= 1;
+                        if state.detail_related_cursor < state.detail_related_offset {
+                            state.detail_related_offset = state.detail_related_cursor;
+                        }
+                    }
                 }
             }
         }
@@ -623,6 +648,7 @@ async fn handle_detail(
                     .get(state.detail_related_cursor)
                     .cloned()
                 {
+                    state.push_detail_snapshot();
                     open_detail_from_anime(state, anime, pool, tx).await;
                     state.detail_origin_title = origin_title;
                 }

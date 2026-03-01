@@ -25,7 +25,7 @@ pub fn render_overlay(frame: &mut Frame) {
             ("Enter",      "Open detail (Home) / start or continue (Detail)"),
             ("d",          "Open detail from Home"),
             ("r",          "Resume from Home / next episode"),
-            ("Esc",        "Back / Close"),
+            ("Esc",        "Back / close (restores prior related detail)"),
             ("/",          "Open search"),
             ("+",          "Add to / remove from watchlist"),
             ("n",          "Play next episode from Detail"),
@@ -34,7 +34,7 @@ pub fn render_overlay(frame: &mut Frame) {
         ("Other", vec![
             ("?",          "Toggle this help"),
             ("Shift+R",    "Refresh home screen"),
-            ("Search",     "Type normally, use ↑/↓ to pick results"),
+            ("Search",     "Type normally, use ↑/↓ to pick results and preview"),
             ("Ctrl+C",     "Force quit"),
         ]),
     ];

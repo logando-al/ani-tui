@@ -111,6 +111,10 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
         .chars()
         .take(120)
         .collect::<String>();
+    let launch_status = state
+        .last_played
+        .as_deref()
+        .filter(|_| state.last_played_anime_id == Some(anime.id));
 
     let cover_frame = if cols[0].width > 4 {
         cols[0].inner(Margin { horizontal: 1, vertical: 0 })
@@ -154,7 +158,7 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
         cover_frame,
     );
 
-    let content = vec![
+    let mut content = vec![
         Line::from(Span::styled(
             title,
             Style::default()
@@ -181,8 +185,25 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
             desc,
             Style::default().fg(Color::Rgb(200, 200, 200)),
         )),
-        Line::from(""),
-        Line::from(vec![
+    ];
+
+    if let Some(status) = launch_status {
+        content.push(Line::from(""));
+        content.push(Line::from(vec![
+            Span::styled(
+                " External player launched ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(180, 0, 255))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(status, Style::default().fg(Color::Rgb(185, 185, 205))),
+        ]));
+    }
+
+    content.push(Line::from(""));
+    content.push(Line::from(vec![
             Span::styled(
                 play_label,
                 Style::default()
@@ -212,8 +233,7 @@ fn render_featured(frame: &mut Frame, area: Rect, state: &mut AppState, anime: O
                     .bg(Color::Rgb(180, 0, 255))
                     .add_modifier(Modifier::BOLD),
             ),
-        ]),
-    ];
+        ]));
 
     let block = Paragraph::new(content)
         .style(Style::default().bg(Color::Rgb(12, 12, 18)))

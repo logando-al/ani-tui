@@ -247,7 +247,14 @@ fn render_related(frame: &mut Frame, area: Rect, state: &AppState) {
     let gap: u16 = 1;
     let visible = (inner.width / (card_width + gap)).max(1) as usize;
 
-    for (idx, anime) in state.detail_recommendations.iter().take(visible).enumerate() {
+    for (idx, anime) in state
+        .detail_recommendations
+        .iter()
+        .skip(state.detail_related_offset)
+        .take(visible)
+        .enumerate()
+    {
+        let absolute_idx = state.detail_related_offset + idx;
         let x = inner.x + idx as u16 * (card_width + gap);
         if x + card_width > inner.x + inner.width {
             break;
@@ -277,7 +284,8 @@ fn render_related(frame: &mut Frame, area: Rect, state: &AppState) {
             )),
         ];
 
-        let is_selected = state.detail_focus == DetailFocus::Related && idx == state.detail_related_cursor;
+        let is_selected =
+            state.detail_focus == DetailFocus::Related && absolute_idx == state.detail_related_cursor;
         let item = Paragraph::new(lines)
             .block(
                 Block::default()

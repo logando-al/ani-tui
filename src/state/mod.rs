@@ -42,6 +42,21 @@ pub enum DetailFocus {
     Related,
 }
 
+#[derive(Clone)]
+struct DetailSnapshot {
+    anime: Anime,
+    in_watchlist: bool,
+    watched_episodes: HashSet<u32>,
+    detail_recommendations: Vec<Anime>,
+    detail_recommendation_reasons: HashMap<i64, String>,
+    detail_focus: DetailFocus,
+    detail_related_cursor: usize,
+    detail_related_offset: usize,
+    detail_origin_title: Option<String>,
+    last_played: Option<String>,
+    last_played_anime_id: Option<i64>,
+}
+
 /// The full application state passed to every render call.
 pub struct AppState {
     /// Currently active screen
@@ -128,8 +143,14 @@ pub struct AppState {
     /// Detail screen: selected "More Like This" card
     pub detail_related_cursor: usize,
 
+    /// Detail screen: horizontal scroll offset for "More Like This"
+    pub detail_related_offset: usize,
+
     /// Detail screen: breadcrumb title when opened from a related recommendation
     pub detail_origin_title: Option<String>,
+
+    /// Detail navigation history when drilling into related anime
+    detail_history: Vec<DetailSnapshot>,
 
     /// Toast notification: (message, expiry unix timestamp)
     pub toast:            Option<(String, i64)>,
@@ -181,7 +202,9 @@ impl AppState {
             detail_recommendation_reasons: HashMap::new(),
             detail_focus:      DetailFocus::Episodes,
             detail_related_cursor: 0,
+            detail_related_offset: 0,
             detail_origin_title: None,
+            detail_history:     Vec::new(),
             toast:            None,
             is_loading:       true,
             should_quit:      false,
@@ -232,7 +255,13 @@ impl AppState {
             Screen::Playback => Screen::Detail,
             Screen::PlaybackQuery => Screen::Detail,
             Screen::PlaybackOptions => Screen::Detail,
-            Screen::Detail   => Screen::Home,
+            Screen::Detail   => {
+                if self.restore_previous_detail() {
+                    Screen::Detail
+                } else {
+                    Screen::Home
+                }
+            }
             Screen::Search   => Screen::Home,
             Screen::Help     => Screen::Home,
             Screen::Home     => {
@@ -258,6 +287,7 @@ impl AppState {
         self.detail_recommendation_reasons = HashMap::new();
         self.detail_focus = DetailFocus::Episodes;
         self.detail_related_cursor = 0;
+        self.detail_related_offset = 0;
         self.detail_origin_title = None;
         self.selected_anime   = Some(anime);
         self.screen           = Screen::Detail;
@@ -331,6 +361,48 @@ impl AppState {
     pub fn scroll_row_left(&mut self, row: &str) {
         let entry = self.row_offsets.entry(row.to_string()).or_insert(0);
         *entry = entry.saturating_sub(1);
+    }
+
+    /// Save the current detail screen so a related drill-down can return to it.
+    pub fn push_detail_snapshot(&mut self) {
+        let Some(anime) = self.selected_anime.clone() else {
+            return;
+        };
+
+        self.detail_history.push(DetailSnapshot {
+            anime,
+            in_watchlist: self.in_watchlist,
+            watched_episodes: self.watched_episodes.clone(),
+            detail_recommendations: self.detail_recommendations.clone(),
+            detail_recommendation_reasons: self.detail_recommendation_reasons.clone(),
+            detail_focus: self.detail_focus.clone(),
+            detail_related_cursor: self.detail_related_cursor,
+            detail_related_offset: self.detail_related_offset,
+            detail_origin_title: self.detail_origin_title.clone(),
+            last_played: self.last_played.clone(),
+            last_played_anime_id: self.last_played_anime_id,
+        });
+    }
+
+    fn restore_previous_detail(&mut self) -> bool {
+        let Some(snapshot) = self.detail_history.pop() else {
+            return false;
+        };
+
+        let total = snapshot.anime.episodes.unwrap_or(0) as u32;
+        self.episode_list = (1..=total.max(1)).collect();
+        self.selected_anime = Some(snapshot.anime);
+        self.in_watchlist = snapshot.in_watchlist;
+        self.detail_recommendations = snapshot.detail_recommendations;
+        self.detail_recommendation_reasons = snapshot.detail_recommendation_reasons;
+        self.detail_focus = snapshot.detail_focus;
+        self.detail_related_cursor = snapshot.detail_related_cursor;
+        self.detail_related_offset = snapshot.detail_related_offset;
+        self.detail_origin_title = snapshot.detail_origin_title;
+        self.last_played = snapshot.last_played;
+        self.last_played_anime_id = snapshot.last_played_anime_id;
+        self.set_watched_episodes(snapshot.watched_episodes);
+        true
     }
 }
 
