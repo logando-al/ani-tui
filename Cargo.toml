@@ -1,6 +1,6 @@
 [package]
 name = "ani-tui"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "A production-ready terminal UI for anime, powered by ani-cli"
 authors = ["Logan"]
