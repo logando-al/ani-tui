@@ -140,6 +140,9 @@ async fn main() -> anyhow::Result<()> {
                 }
                 AppMessage::WatchlistUpdated(list) => {
                     home_data.watchlist = list;
+                    let max_idx = home_data.watchlist.len().saturating_sub(1);
+                    let offset  = state.row_offset("watchlist").min(max_idx);
+                    state.row_offsets.insert("watchlist".to_string(), offset);
                 }
             }
         }
@@ -273,6 +276,34 @@ async fn handle_home(
 
         KeyCode::Char('/') => state.open_search(),
         KeyCode::Char('?') => state.screen = Screen::Help,
+
+        // Toggle watchlist for the highlighted card directly from Home
+        KeyCode::Char('+') => {
+            if let Some(anime) = active_anime(state, home_data) {
+                let now   = unix_now();
+                let in_wl = db::user::is_in_watchlist(pool, anime.id).await.unwrap_or(false);
+
+                if in_wl {
+                    if db::user::remove_from_watchlist(pool, anime.id).await.is_ok() {
+                        state.show_toast("Removed from watchlist", now);
+                        let pool2 = pool.clone();
+                        let tx2   = tx.clone();
+                        tokio::spawn(async move {
+                            let wl = services::sync::load_watchlist(&pool2).await.unwrap_or_default();
+                            let _ = tx2.send(AppMessage::WatchlistUpdated(wl)).await;
+                        });
+                    }
+                } else if db::user::add_to_watchlist(pool, anime.id, now).await.is_ok() {
+                    state.show_toast("Added to watchlist", now);
+                    let pool2 = pool.clone();
+                    let tx2   = tx.clone();
+                    tokio::spawn(async move {
+                        let wl = services::sync::load_watchlist(&pool2).await.unwrap_or_default();
+                        let _ = tx2.send(AppMessage::WatchlistUpdated(wl)).await;
+                    });
+                }
+            }
+        }
 
         // Refresh home data (re-sync respecting TTLs)
         KeyCode::Char('r') => {

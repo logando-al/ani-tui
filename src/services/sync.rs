@@ -60,19 +60,24 @@ pub async fn sync_category(
     now:      i64,
 ) -> Result<Vec<cache::Anime>> {
     if meta::is_stale(pool, category, ttl, now).await? {
-        let anime_list = match category {
-            meta::TRENDING  => client.trending(now).await?,
-            meta::POPULAR   => client.popular(now).await?,
-            meta::TOP_RATED => client.top_rated(now).await?,
+        let fetch_result = match category {
+            meta::TRENDING  => client.trending(now).await,
+            meta::POPULAR   => client.popular(now).await,
+            meta::TOP_RATED => client.top_rated(now).await,
             meta::SEASONAL  => {
                 let (season, year) = season_from_timestamp(now);
-                client.seasonal(&season, year, now).await?
+                client.seasonal(&season, year, now).await
             }
             other => {
                 return Err(crate::error::AppError::Parse(
                     format!("Unknown category: {}", other),
                 ))
             }
+        };
+
+        let anime_list = match fetch_result {
+            Ok(anime_list) => anime_list,
+            Err(_) => return cache::get_category(pool, category).await,
         };
 
         // Persist each anime and the category ordering

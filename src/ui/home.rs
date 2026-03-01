@@ -25,6 +25,7 @@ const CARD_GAP: u16    = 1;
 /// Render the full home screen.
 pub fn render(frame: &mut Frame, state: &AppState, categories: &HomeData) {
     let area = frame.area();
+    let banner_anime = active_banner_anime(state, categories).or(categories.featured.as_ref());
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -35,12 +36,12 @@ pub fn render(frame: &mut Frame, state: &AppState, categories: &HomeData) {
         ])
         .split(area);
 
-    render_featured(frame, chunks[0], categories.featured.as_ref());
+    render_featured(frame, chunks[0], banner_anime, categories);
     render_rows(frame, chunks[2], state, categories);
 }
 
 /// Featured banner at the top — highlights the first trending anime.
-fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>) {
+fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>, data: &HomeData) {
     let Some(anime) = anime else {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -59,6 +60,12 @@ fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>) {
         .episodes
         .map(|e| format!("{} eps", e))
         .unwrap_or_else(|| "? eps".to_string());
+    let in_watchlist = data.watchlist.iter().any(|item| item.id == anime.id);
+    let watchlist_label = if in_watchlist {
+        " - Remove "
+    } else {
+        " + Watchlist "
+    };
     let desc    = anime
         .description
         .as_deref()
@@ -94,7 +101,7 @@ fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>) {
             ),
             Span::raw("  "),
             Span::styled(
-                " + Watchlist ",
+                watchlist_label,
                 Style::default()
                     .fg(Color::White)
                     .bg(Color::Rgb(60, 60, 60)),
@@ -111,6 +118,19 @@ fn render_featured(frame: &mut Frame, area: Rect, anime: Option<&Anime>) {
         )
         .style(Style::default().bg(Color::Rgb(12, 12, 18)));
     frame.render_widget(block, area);
+}
+
+fn active_banner_anime<'a>(state: &AppState, data: &'a HomeData) -> Option<&'a Anime> {
+    let (row_key, items) = match state.active_row {
+        CategoryRow::ContinueWatching => ("continue_watching", &data.continue_watching),
+        CategoryRow::Watchlist        => ("watchlist", &data.watchlist),
+        CategoryRow::Trending         => ("trending", &data.trending),
+        CategoryRow::Popular          => ("popular", &data.popular),
+        CategoryRow::TopRated         => ("top_rated", &data.top_rated),
+        CategoryRow::Seasonal         => ("seasonal", &data.seasonal),
+    };
+
+    items.get(state.row_offset(row_key))
 }
 
 /// Render all category rows.
@@ -155,7 +175,14 @@ fn render_rows(frame: &mut Frame, area: Rect, state: &AppState, data: &HomeData)
         CategoryRow::Seasonal         => "seasonal",
     };
 
-    for (i, (label, key, items)) in visible.iter().take(visible_rows as usize).enumerate() {
+    let visible_rows = visible_rows as usize;
+    let active_idx   = visible
+        .iter()
+        .position(|(_, key, _)| *key == active_key)
+        .unwrap_or(0);
+    let start_idx    = active_idx.saturating_sub(visible_rows.saturating_sub(1));
+
+    for (i, (label, key, items)) in visible.iter().skip(start_idx).take(visible_rows).enumerate() {
         if i < row_areas.len() {
             render_row(frame, row_areas[i], state, label, key, items, *key == active_key);
         }
