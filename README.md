@@ -1,6 +1,6 @@
 # ani-tui
 
-A Netflix-style terminal UI for anime, powered by [ani-cli](https://github.com/pystardust/ani-cli).
+A production-ready terminal UI for anime, powered by [ani-cli](https://github.com/pystardust/ani-cli).
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════╗
@@ -19,15 +19,16 @@ A Netflix-style terminal UI for anime, powered by [ani-cli](https://github.com/p
 
 ## Features
 
-- **Netflix-style home screen** — featured banner + category rows (Continue Watching, Watchlist, Trending, Popular, Top Rated, Seasonal)
+- **Curated home screen** — featured banner + category rows (Continue Watching, Watchlist, Recommended, Trending, Popular, Top Rated, Seasonal)
 - **Detail screen** — cover art, metadata, scrollable episode pills with watched indicators
 - **Real cover images** — Kitty Graphics Protocol on supported terminals (Ghostty); halfblock fallback everywhere else
-- **Playback via ani-cli** — streams log output live, supports next-episode (`n`) without leaving the TUI
+- **Heuristic recommendation engine** — local-first `Because You Watched` and `More Like This` rows built from watch history, genres, format, recency, and cached popularity signals
+- **Playback via ani-cli** — detached external-player handoff with next-episode (`n`) directly from the detail screen
 - **Watch history** — episodes marked watched on play, persist across sessions
 - **Watchlist** — add/remove with `+`, updates the home row immediately
 - **Search** — instant SQLite local search + AniList network fallback for full catalogue
 - **Offline-capable** — SQLite cache with TTL-based staleness; home screen loads from cache with no network needed
-- **Help overlay** (`?`) available on Home and Detail screens
+- **Production overlays** — help, search, settings, and setup/dependency checks are available in-app
 
 ## Prerequisites
 
@@ -36,11 +37,11 @@ Before running `ani-tui`, make sure these runtime dependencies are installed:
 - [ani-cli](https://github.com/pystardust/ani-cli) must be installed and available on `$PATH`
 - A supported video player must be installed
   - `mpv` is the default player
-  - on macOS, `ani-tui` will fall back to `iina` automatically if `mpv` is not installed
-  - `vlc` can also be used if you change `player` in the config
+  - on macOS, `ani-tui` can use `iina` directly and will also fall back to it when `mpv` is missing
+  - `vlc` is also supported
 - A terminal with truecolor support is recommended
-  - Ghostty works, but `ani-tui` currently falls back to halfblock cover rendering there for stability
-  - Any other truecolor terminal should also work with the halfblock fallback
+  - banner and detail images work on supported terminals
+  - `Home` row cards intentionally use the stable halfblock cover renderer
 
 ### Verify Prerequisites
 
@@ -66,6 +67,62 @@ If any command prints `not found`, install that dependency first and make sure i
 
 ## Installation
 
+### Production Install (macOS)
+
+Primary path:
+
+```bash
+brew tap logando-al/tap
+brew install ani-tui
+```
+
+Then install playback dependencies:
+
+```bash
+brew install curl grep aria2 ffmpeg git fzf yt-dlp
+brew install --cask iina
+```
+
+Install `ani-cli` separately and ensure it is on your `PATH`.
+
+### Production Install (Linux)
+
+Option 1: download a release binary and place it on your path.
+
+```bash
+mkdir -p ~/.local/bin
+cp ./ani-tui ~/.local/bin/ani-tui
+chmod +x ~/.local/bin/ani-tui
+```
+
+Option 2: install from the tagged source release with Cargo.
+
+```bash
+cargo install --git https://github.com/logando-al/ani-tui --tag v1.0.0
+```
+
+Install runtime dependencies with your distro package manager, then install `ani-cli` separately.
+
+Debian / Ubuntu example:
+
+```bash
+sudo apt install mpv vlc curl grep aria2 ffmpeg fzf yt-dlp
+```
+
+Fedora example:
+
+```bash
+sudo dnf install mpv vlc curl grep aria2 ffmpeg fzf yt-dlp
+```
+
+Arch example:
+
+```bash
+sudo pacman -S mpv vlc curl grep aria2 ffmpeg fzf yt-dlp
+```
+
+### Build From Source
+
 ```bash
 git clone https://github.com/logando-al/ani-tui.git
 cd ani-tui
@@ -82,6 +139,8 @@ ani-tui
 
 If playback does not start, the most common cause is a missing `ani-cli` or missing player binary.
 
+On first run, `ani-tui` will open the in-app setup screen automatically if playback dependencies are missing.
+
 ### Keybindings
 
 #### Home
@@ -91,31 +150,48 @@ If playback does not start, the most common cause is a missing `ani-cli` or miss
 | `h` / `l` | Scroll cards left / right |
 | `Enter` | Open detail screen |
 | `/` | Search |
+| `s` | Open settings |
+| `!` | Open setup / dependency checks |
 | `?` | Help overlay |
-| `r` | Refresh home data |
+| `r` | Resume highlighted anime |
+| `Shift+R` | Refresh home data |
 | `q` / `Esc` | Quit |
 
 #### Detail
 | Key | Action |
 |-----|--------|
 | `h` / `l` | Navigate episodes |
-| `Enter` | Play selected episode |
+| `Tab` | Toggle focus between Episodes / More Like This |
+| `Enter` | Start / continue selected episode, or open focused related anime |
 | `+` | Toggle watchlist |
+| `n` | Play next episode |
 | `/` | Search |
+| `s` | Open settings |
+| `!` | Open setup / dependency checks |
 | `?` | Help overlay |
 | `Esc` / `q` | Back |
-
-#### Playback
-| Key | Action |
-|-----|--------|
-| `n` | Next episode |
-| `q` / `Esc` | Stop and return |
 
 #### Search
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Move cursor |
+| Type | Update search query |
+| `↑` / `↓` | Move cursor |
 | `Enter` | Open detail |
+| `Esc` | Close |
+
+#### Settings
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move between preference rows |
+| `h` / `l` | Change selected preference |
+| `Enter` | Advance the selected preference |
+| `Esc` | Close |
+
+#### Setup
+| Key | Action |
+|-----|--------|
+| `r` | Refresh dependency checks |
+| `s` | Open settings |
 | `Esc` | Close |
 
 ## Configuration
@@ -128,7 +204,7 @@ Config file is created automatically at first run:
 ```toml
 quality    = "best"      # best | 1080p | 720p | 480p | 360p
 audio_mode = "sub"       # sub | dub
-player     = "mpv"       # preferred player: mpv (falls back to iina on macOS) | vlc
+player     = "mpv"       # preferred player: mpv | iina | vlc
 
 [cache]
 trending_ttl = 86400     # seconds (24h)
@@ -148,13 +224,15 @@ src/
     user.rs       — Watch history, continue watching, watchlist
     sync.rs       — TTL-based cache staleness
   services/
-    sync.rs       — Orchestrates AniList → SQLite sync
+    sync.rs       — Orchestrates AniList → SQLite sync + heuristic recommendations
   ui/
-    home.rs       — Netflix home screen
+    home.rs       — Curated home screen
     detail.rs     — Anime detail + episode list
     playback.rs   — Log stream + controls
     search.rs     — Search overlay
     help.rs       — Help overlay + toast notifications
+    settings.rs   — Settings overlay
+    setup.rs      — Dependency / onboarding overlay
     components/
       cover.rs    — Halfblock cover renderer + Kitty image support
   state/mod.rs    — AppState, Screen enum, navigation helpers
@@ -169,6 +247,14 @@ migrations/
 
 - **Metadata**: [AniList GraphQL API](https://anilist.co/graphql) — no API key required
 - **Playback**: [ani-cli](https://github.com/pystardust/ani-cli) — streams from supported providers
+
+## Production Release
+
+- GitHub Releases are the source of truth for production binaries
+- macOS users should prefer the Homebrew tap
+- Linux users should prefer the release binary or `cargo install`
+- Use the in-repo release checklist before tagging a new version:
+  - [RELEASE-CHECKLIST.md](/Users/logan/Documents/Ani-TUI/ani-tui/RELEASE-CHECKLIST.md)
 
 ## License
 
