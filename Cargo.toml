@@ -1,9 +1,15 @@
 [package]
 name = "ani-tui"
-version = "1.0.3"
+version = "1.0.4"
 edition = "2021"
 description = "A production-ready terminal UI for anime, powered by ani-cli"
 authors = ["Logan"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/logando-al/ani-tui"
+homepage = "https://github.com/logando-al/ani-tui"
+keywords = ["anime", "tui", "terminal", "cli"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "ani-tui"

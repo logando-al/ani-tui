@@ -38,8 +38,8 @@ Manual smoke test:
 2. Create the tag:
 
 ```bash
-git tag v1.0.3
-git push origin v1.0.3
+git tag v1.0.4
+git push origin v1.0.4
 ```
 
 3. Wait for the GitHub Actions release workflow to build and attach:

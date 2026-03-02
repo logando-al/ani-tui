@@ -67,6 +67,14 @@ If any command prints `not found`, install that dependency first and make sure i
 
 ## Installation
 
+### Install With Cargo (crates.io)
+
+```bash
+cargo install ani-tui
+```
+
+Then install the runtime dependencies listed below.
+
 ### Production Install (macOS)
 
 Primary path:
@@ -95,10 +103,10 @@ cp ./ani-tui ~/.local/bin/ani-tui
 chmod +x ~/.local/bin/ani-tui
 ```
 
-Option 2: install from the tagged source release with Cargo.
+Option 2: install from crates.io with Cargo.
 
 ```bash
-cargo install --git https://github.com/logando-al/ani-tui --tag v1.0.3
+cargo install ani-tui
 ```
 
 Install runtime dependencies with your distro package manager, then install `ani-cli` separately.
@@ -253,8 +261,8 @@ migrations/
 - GitHub Releases are the source of truth for production binaries
 - macOS users should prefer the Homebrew tap
 - Linux users should prefer the release binary or `cargo install`
-- Use the in-repo release checklist before tagging a new version:
-  - [RELEASE-CHECKLIST.md](/Users/logan/Documents/Ani-TUI/ani-tui/RELEASE-CHECKLIST.md)
+- Use the release checklist in the repository before tagging a new version:
+  - `RELEASE-CHECKLIST.md`
 
 ## License
 
