@@ -70,7 +70,7 @@ If any command prints `not found`, install that dependency first and make sure i
 ### Install With Cargo (crates.io)
 
 ```bash
-cargo install ani-tui
+cargo install ani-tui-app
 ```
 
 Then install the runtime dependencies listed below.
@@ -106,7 +106,7 @@ chmod +x ~/.local/bin/ani-tui
 Option 2: install from crates.io with Cargo.
 
 ```bash
-cargo install ani-tui
+cargo install ani-tui-app
 ```
 
 Install runtime dependencies with your distro package manager, then install `ani-cli` separately.

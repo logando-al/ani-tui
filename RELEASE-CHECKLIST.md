@@ -7,7 +7,7 @@ Use this checklist before publishing a production release tag.
 - Stable release target: `v1.x.y`
 - Official release source: GitHub Releases
 - Primary macOS install path: Homebrew tap
-- Primary Linux install path: GitHub binary or `cargo install`
+- Primary Linux install path: GitHub binary or `cargo install ani-tui-app`
 
 ## Pre-Release Validation
 

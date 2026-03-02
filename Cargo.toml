@@ -1,5 +1,5 @@
 [package]
-name = "ani-tui"
+name = "ani-tui-app"
 version = "1.0.4"
 edition = "2021"
 description = "A production-ready terminal UI for anime, powered by ani-cli"
