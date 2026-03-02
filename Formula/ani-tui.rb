@@ -5,10 +5,10 @@ class AniTui < Formula
 
   if Hardware::CPU.arm?
     url "https://github.com/logando-al/ani-tui/releases/download/v1.0.4/ani-tui-macos-aarch64"
-    sha256 "REPLACE_WITH_MACOS_AARCH64_SHA256"
+    sha256 "1f1ab55408653d82f3d4f6504053fb7585391df2613192518055bfcbf41cf397"
   else
     url "https://github.com/logando-al/ani-tui/releases/download/v1.0.4/ani-tui-macos-x86_64"
-    sha256 "REPLACE_WITH_MACOS_X86_64_SHA256"
+    sha256 "e8ab05236332226719b6160dc764bf8bb751fdf518ee64f9c8ef4409d1d1ef5d"
   end
 
   def install
