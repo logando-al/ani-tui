@@ -265,6 +265,32 @@ migrations/
 - `ani-cli` remains an external runtime dependency and is not bundled with this project
 - The crates.io package name is `ani-tui-app`, while the installed executable remains `ani-tui`
 
+## Contributing
+
+Contributions are welcome.
+
+If you want to contribute:
+
+- Open an issue for bugs, regressions, or feature proposals
+- Fork the repository and create a focused branch for your change
+- Keep pull requests small and clearly scoped
+- Include screenshots or terminal recordings for UI changes when possible
+- Run the project checks before opening a pull request:
+
+```bash
+cargo check
+cargo test
+```
+
+For larger changes, open an issue first so the direction can be agreed before implementation.
+
+## Acknowledgements
+
+- [`ani-cli`](https://github.com/pystardust/ani-cli) powers the playback handoff used by `ani-tui`
+- [`AniList`](https://anilist.co/) provides the metadata used for browsing, search, and cached catalog views
+
+`ani-tui` builds its own local UI, persistence, and heuristic recommendation flow, but playback depends on the external `ani-cli` tool. Credit to the `ani-cli` project for the playback engine this app integrates with.
+
 ## Production Release
 
 - GitHub Releases are the source of truth for production binaries
@@ -275,4 +301,4 @@ migrations/
 
 ## License
 
-MIT
+MIT. See `LICENSE`.
