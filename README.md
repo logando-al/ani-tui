@@ -30,6 +30,30 @@ A production-ready terminal UI for anime, powered by [ani-cli](https://github.co
 - **Offline-capable** — SQLite cache with TTL-based staleness; home screen loads from cache with no network needed
 - **Production overlays** — help, search, settings, and setup/dependency checks are available in-app
 
+## Screenshots
+
+Drop the screenshots into `docs/screenshots/` using the filenames below and GitHub will render them in the README.
+
+### Home Screen
+
+![Home screen overview](docs/screenshots/home-screen.gif)
+
+### Detail Screen
+
+![Detail screen with related recommendations](docs/screenshots/detail-screen.png)
+
+### Settings Overlay
+
+![Settings overlay](docs/screenshots/settings-overlay.png)
+
+### Playback Setup Overlay
+
+![Playback setup overlay](docs/screenshots/setup-overlay.png)
+
+### Related Recommendation Drill-In
+
+![Detail screen opened from a related recommendation](docs/screenshots/related-drill-in.png)
+
 ## Prerequisites
 
 Before running `ani-tui`, make sure these runtime dependencies are installed:
