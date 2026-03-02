@@ -49,18 +49,6 @@ struct PagePayload {
     media: Vec<RawAnime>,
 }
 
-#[derive(Debug, Deserialize)]
-struct SearchResponse {
-    #[serde(rename = "data")]
-    _data: SearchData,
-}
-
-#[derive(Debug, Deserialize)]
-struct SearchData {
-    #[serde(rename = "Page")]
-    _page: PagePayload,
-}
-
 /// Raw anime as returned by AniList — mapped to our `Anime` model.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
