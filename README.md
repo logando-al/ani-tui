@@ -2,6 +2,10 @@
 
 A production-ready terminal UI for anime, powered by [ani-cli](https://github.com/pystardust/ani-cli).
 
+`ani-tui` is a keyboard-first desktop terminal experience for browsing anime, resuming watch progress, and handing playback off to an externally installed player through `ani-cli`.
+
+It is built for local-first use: metadata is cached in SQLite, recommendations are generated from your own watch behavior, and the app stays usable even when network access is limited.
+
 ```
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║  ani-tui                                                                 ║
@@ -16,6 +20,21 @@ A production-ready terminal UI for anime, powered by [ani-cli](https://github.co
 ║  🔥 Trending  ───────────────────────────────────────────────────────     ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 ```
+
+## What It Does
+
+- Browse a curated anime home screen with continue watching, watchlist, seasonal, trending, and recommendation rows
+- Resume directly into the next episode with persisted watch history
+- Surface local heuristic recommendations with explainable reasons such as shared genres and popularity signals
+- Hand playback off to `ani-cli` while keeping the TUI responsive
+
+## Stack
+
+- Rust
+- `ratatui` + `crossterm`
+- `sqlx` with SQLite
+- `reqwest`
+- `ani-cli` as an external playback runtime dependency
 
 ## Features
 
@@ -32,7 +51,7 @@ A production-ready terminal UI for anime, powered by [ani-cli](https://github.co
 
 ## Screenshots
 
-Drop the screenshots into `docs/screenshots/` using the filenames below and GitHub will render them in the README.
+Current interface captures from the production v1 UI.
 
 ### Home Screen
 
@@ -99,7 +118,7 @@ cargo install ani-tui-app
 
 Then install the runtime dependencies listed below.
 
-### Production Install (macOS)
+### Install on macOS
 
 Primary path:
 
@@ -109,7 +128,7 @@ brew install ani-tui
 ```
 
 Homebrew formula source:
-- `https://github.com/logando-al/homebrew-tap`
+- [logando-al/homebrew-tap](https://github.com/logando-al/homebrew-tap)
 
 Then install playback dependencies:
 
@@ -120,7 +139,7 @@ brew install --cask iina
 
 Install `ani-cli` separately and ensure it is on your `PATH`.
 
-### Production Install (Linux)
+### Install on Linux
 
 Option 1: download a release binary and place it on your path.
 
@@ -164,6 +183,15 @@ cd ani-tui
 cargo build --release
 # Copy binary to PATH
 cp target/release/ani-tui ~/.local/bin/
+```
+
+## Running Tests
+
+Run the standard validation commands before opening a pull request or cutting a release:
+
+```bash
+cargo check
+cargo test
 ```
 
 ## Usage
@@ -320,8 +348,7 @@ For larger changes, open an issue first so the direction can be agreed before im
 - GitHub Releases are the source of truth for production binaries
 - macOS users should prefer the Homebrew tap
 - Linux users should prefer the release binary or `cargo install`
-- Use the release checklist in the repository before tagging a new version:
-  - `RELEASE-CHECKLIST.md`
+- Use the release checklist in the repository before tagging a new version: `RELEASE-CHECKLIST.md`
 
 ## License
 
