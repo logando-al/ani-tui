@@ -84,6 +84,9 @@ brew tap logando-al/tap
 brew install ani-tui
 ```
 
+Homebrew formula source:
+- `https://github.com/logando-al/homebrew-tap`
+
 Then install playback dependencies:
 
 ```bash
@@ -255,6 +258,12 @@ migrations/
 
 - **Metadata**: [AniList GraphQL API](https://anilist.co/graphql) — no API key required
 - **Playback**: [ani-cli](https://github.com/pystardust/ani-cli) — streams from supported providers
+
+## Distribution Notes
+
+- `ani-tui` ships as an MIT-licensed Rust application
+- `ani-cli` remains an external runtime dependency and is not bundled with this project
+- The crates.io package name is `ani-tui-app`, while the installed executable remains `ani-tui`
 
 ## Production Release
 
