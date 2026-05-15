@@ -125,6 +125,9 @@ async fn main() -> anyhow::Result<()> {
                     if state.screen == Screen::Playback {
                         state.screen = Screen::Detail;
                     }
+                    if let Some(err_msg) = state.playback_error_message() {
+                        state.show_toast(err_msg.to_string(), unix_now());
+                    }
                 }
                 AppMessage::SearchResults(results) => {
                     state.search_results = results;
@@ -1027,9 +1030,8 @@ async fn start_playback(
     }
 
     let mut child = match api::player::spawn_async(&opts) {
-        Ok(c)  => c,
+        Ok(c) => c,
         Err(e) => {
-            // Return to Detail so the user isn't stranded on an empty Playback screen
             state.screen = Screen::Detail;
             state.show_toast(format!("Playback failed: {e}"), unix_now());
             return;
@@ -1078,9 +1080,15 @@ async fn start_playback(
     let tx4 = tx.clone();
     tokio::spawn(async move {
         tokio::select! {
-            _ = child.wait()  => { let _ = tx4.send(AppMessage::PlaybackDone).await; }
+            status = child.wait() => {
+                let msg = format!("ani-cli exited: {:?}", status);
+                let _ = tx4.send(AppMessage::PlaybackLog(msg)).await;
+                let _ = tx4.send(AppMessage::PlaybackDone).await;
+            }
             _ = stop_rx       => {
-                let _ = child.kill().await;
+                let kill_res = child.kill().await;
+                let msg = format!("manual stop — kill result: {:?}", kill_res);
+                let _ = tx4.send(AppMessage::PlaybackLog(msg)).await;
                 let _ = tx4.send(AppMessage::PlaybackDone).await;
             }
         }

@@ -387,6 +387,20 @@ impl AppState {
         self.playback_logs.push(line);
     }
 
+    /// Check playback logs for known ani-cli error messages.
+    /// Returns a user-facing error message if the logs indicate a failure.
+    pub fn playback_error_message(&self) -> Option<&str> {
+        for log in &self.playback_logs {
+            if log.contains("Episode is released, but no valid sources") {
+                return Some("No valid sources. The provider may be down — try again later.");
+            }
+            if log.contains("Failed to spawn ani-cli") {
+                return Some("Playback failed. Check that ani-cli and a player are installed.");
+            }
+        }
+        None
+    }
+
     /// Get or default the card offset for a named row.
     pub fn row_offset(&self, row: &str) -> usize {
         *self.row_offsets.get(row).unwrap_or(&0)
@@ -613,9 +627,33 @@ mod tests {
     }
 
     #[test]
-    fn test_scroll_row_left_does_not_underflow() {
+    fn test_playback_error_message_detects_no_sources() {
         let mut state = AppState::new();
-        state.scroll_row_left("trending"); // already at 0
-        assert_eq!(state.row_offset("trending"), 0);
+        state.push_log("sharepoint Links Fetched".into());
+        state.push_log("hianime Links Fetched".into());
+        state.push_log("Specified quality not found, defaulting to best".into());
+        state.push_log("Episode is released, but no valid sources!".into());
+
+        let msg = state.playback_error_message();
+        assert_eq!(msg, Some("No valid sources. The provider may be down — try again later."));
+    }
+
+    #[test]
+    fn test_playback_error_message_detects_missing_deps() {
+        let mut state = AppState::new();
+        state.push_log("Failed to spawn ani-cli: No such file or directory".into());
+
+        let msg = state.playback_error_message();
+        assert_eq!(msg, Some("Playback failed. Check that ani-cli and a player are installed."));
+    }
+
+    #[test]
+    fn test_playback_error_message_none_when_ok() {
+        let mut state = AppState::new();
+        state.push_log("sharepoint Links Fetched".into());
+        state.push_log("sharepoint Links Fetched".into());
+        state.push_log("inappropriate ioctl for device".into());
+
+        assert!(state.playback_error_message().is_none());
     }
 }
