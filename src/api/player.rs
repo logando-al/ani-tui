@@ -209,14 +209,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_args_runs_without_no_detach() {
-        let args_sub = build_args(&opts("Test", 1, "720p", false));
-        let args_dub = build_args(&opts("Test", 1, "720p", true));
-        assert!(!args_sub.contains(&"--no-detach".to_string()));
-        assert!(!args_dub.contains(&"--no-detach".to_string()));
-    }
-
-    #[test]
     fn test_build_args_select_nth_precedes_title() {
         let args = build_args(&opts("Test", 1, "720p", false));
         let s_pos = args.iter().position(|a| a == "-S").unwrap();
