@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: build-${{ matrix.label }}
@@ -16,15 +19,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-latest
             target: aarch64-apple-darwin
             label: macos-aarch64
             artifact_name: ani-tui-macos-aarch64
-          - os: macos-14
+          - os: macos-latest
             target: x86_64-apple-darwin
             label: macos-x86_64
             artifact_name: ani-tui-macos-x86_64
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             label: linux-x86_64
             artifact_name: ani-tui-linux-x86_64
@@ -54,9 +57,22 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}
+          retention-days: 1
 
-      - name: upload release asset
+  release:
+    name: create-release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: create release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.artifact_name }}
-          overwrite_files: true
+          files: artifacts/*
+          draft: false
+          generate_release_notes: true
