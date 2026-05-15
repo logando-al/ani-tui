@@ -125,6 +125,9 @@ async fn main() -> anyhow::Result<()> {
                     if state.screen == Screen::Playback {
                         state.screen = Screen::Detail;
                     }
+                    if let Some(err_msg) = state.playback_error_message() {
+                        state.show_toast(err_msg.to_string(), unix_now());
+                    }
                 }
                 AppMessage::SearchResults(results) => {
                     state.search_results = results;
@@ -1027,14 +1030,29 @@ async fn start_playback(
     }
 
     let mut child = match api::player::spawn_async(&opts) {
-        Ok(c)  => c,
+        Ok(c) => c,
         Err(e) => {
-            // Return to Detail so the user isn't stranded on an empty Playback screen
             state.screen = Screen::Detail;
             state.show_toast(format!("Playback failed: {e}"), unix_now());
             return;
         }
     };
+
+    // Capture the PID immediately for debugging
+    let pid_msg = format!("spawned ani-cli pid={:?}", child.id());
+    let _ = tx.send(AppMessage::PlaybackLog(pid_msg.clone())).await;
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/ani-tui-debug.log")
+            .await
+            .ok();
+        if let Some(ref mut f) = file {
+            let _ = f.write_all(format!("[SPAWN] {}\n", pid_msg).as_bytes()).await;
+        }
+    }
 
     state.show_toast(format!("Launching Episode {} in external player", episode), unix_now());
 
@@ -1058,9 +1076,19 @@ async fn start_playback(
     if let Some(out) = stdout {
         let tx2 = tx.clone();
         tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/ani-tui-debug.log")
+                .await
+                .ok();
             let mut lines = BufReader::new(out).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let _ = tx2.send(AppMessage::PlaybackLog(line)).await;
+                let _ = tx2.send(AppMessage::PlaybackLog(line.clone())).await;
+                if let Some(ref mut f) = file {
+                    let _ = f.write_all(format!("[STDOUT] {}\n", line).as_bytes()).await;
+                }
             }
         });
     }
@@ -1068,9 +1096,19 @@ async fn start_playback(
     if let Some(err) = stderr {
         let tx3 = tx.clone();
         tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/ani-tui-debug.log")
+                .await
+                .ok();
             let mut lines = BufReader::new(err).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let _ = tx3.send(AppMessage::PlaybackLog(line)).await;
+                let _ = tx3.send(AppMessage::PlaybackLog(line.clone())).await;
+                if let Some(ref mut f) = file {
+                    let _ = f.write_all(format!("[STDERR] {}\n", line).as_bytes()).await;
+                }
             }
         });
     }
@@ -1078,9 +1116,27 @@ async fn start_playback(
     let tx4 = tx.clone();
     tokio::spawn(async move {
         tokio::select! {
-            _ = child.wait()  => { let _ = tx4.send(AppMessage::PlaybackDone).await; }
+            status = child.wait() => {
+                let msg = format!("ani-cli exited: {:?}", status);
+                let _ = tx4.send(AppMessage::PlaybackLog(msg.clone())).await;
+                {
+                    use tokio::io::AsyncWriteExt;
+                    let mut file = tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("/tmp/ani-tui-debug.log")
+                        .await
+                        .ok();
+                    if let Some(ref mut f) = file {
+                        let _ = f.write_all(format!("[EXIT] {}\n", msg).as_bytes()).await;
+                    }
+                }
+                let _ = tx4.send(AppMessage::PlaybackDone).await;
+            }
             _ = stop_rx       => {
-                let _ = child.kill().await;
+                let kill_res = child.kill().await;
+                let msg = format!("manual stop — kill result: {:?}", kill_res);
+                let _ = tx4.send(AppMessage::PlaybackLog(msg)).await;
                 let _ = tx4.send(AppMessage::PlaybackDone).await;
             }
         }
