@@ -1,5 +1,5 @@
 //! ani-cli subprocess wrapper.
-//! Spawns ani-cli in non-interactive mode for async playback with log streaming.
+//! Spawns ani-cli for async playback with log streaming.
 
 use crate::error::{AppError, Result};
 use std::{
@@ -116,13 +116,13 @@ fn macos_iina_fallback() -> Option<String> {
 }
 
 /// Spawn ani-cli asynchronously. stdout + stderr are piped for log streaming.
+/// The player is detached by default (ani-cli default behaviour).
 /// Returns a tokio Child — caller is responsible for reading I/O and waiting.
 pub fn spawn_async(opts: &PlayOptions) -> Result<Child> {
     let args = build_args(opts);
     let player = resolve_player(&opts.player);
     Command::new("ani-cli")
         .args(&args)
-        .env("ANI_CLI_NON_INTERACTIVE", "1")
         .env("ANI_CLI_PLAYER", player)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
