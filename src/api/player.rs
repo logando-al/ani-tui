@@ -1,5 +1,5 @@
 //! ani-cli subprocess wrapper.
-//! Spawns ani-cli in non-interactive mode for async playback with log streaming.
+//! Spawns ani-cli for async playback with log streaming.
 
 use crate::error::{AppError, Result};
 use std::{
@@ -116,13 +116,13 @@ fn macos_iina_fallback() -> Option<String> {
 }
 
 /// Spawn ani-cli asynchronously. stdout + stderr are piped for log streaming.
+/// The player is detached by default (ani-cli default behaviour).
 /// Returns a tokio Child — caller is responsible for reading I/O and waiting.
 pub fn spawn_async(opts: &PlayOptions) -> Result<Child> {
     let args = build_args(opts);
     let player = resolve_player(&opts.player);
     Command::new("ani-cli")
         .args(&args)
-        .env("ANI_CLI_NON_INTERACTIVE", "1")
         .env("ANI_CLI_PLAYER", player)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -191,11 +191,21 @@ mod tests {
     }
 
     #[test]
-    fn test_build_args_runs_without_no_detach() {
-        let args_sub = build_args(&opts("Test", 1, "720p", false));
-        let args_dub = build_args(&opts("Test", 1, "720p", true));
-        assert!(!args_sub.contains(&"--no-detach".to_string()));
-        assert!(!args_dub.contains(&"--no-detach".to_string()));
+    fn test_build_args_v4_14_contract() {
+        let args = build_args(&PlayOptions {
+            title:   "One Piece".to_string(),
+            episode: 5,
+            quality: "720p".to_string(),
+            dub:     true,
+            player:  "mpv".to_string(),
+        });
+        assert_eq!(
+            args,
+            vec!["-S", "1", "-e", "5", "-q", "720p", "--dub", "One Piece"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<String>>()
+        );
     }
 
     #[test]
