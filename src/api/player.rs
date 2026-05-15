@@ -191,6 +191,24 @@ mod tests {
     }
 
     #[test]
+    fn test_build_args_v4_14_contract() {
+        let args = build_args(&PlayOptions {
+            title:   "One Piece".to_string(),
+            episode: 5,
+            quality: "720p".to_string(),
+            dub:     true,
+            player:  "mpv".to_string(),
+        });
+        assert_eq!(
+            args,
+            vec!["-S", "1", "-e", "5", "-q", "720p", "--dub", "One Piece"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<String>>()
+        );
+    }
+
+    #[test]
     fn test_build_args_runs_without_no_detach() {
         let args_sub = build_args(&opts("Test", 1, "720p", false));
         let args_dub = build_args(&opts("Test", 1, "720p", true));
